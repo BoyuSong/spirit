@@ -1,5 +1,5 @@
 from ollama import AsyncClient
-from companion.models.base import ModelProvider, ModelRequest, ModelResponse
+from companion.models.base import ModelProvider, ModelRequest, ModelResponse, ToolCall
 
 
 class OllamaProvider(ModelProvider):
@@ -12,5 +12,15 @@ class OllamaProvider(ModelProvider):
             model=self.model,
             messages=request.messages,
             options={"temperature": request.temperature},
+            tools=request.tools or None,
+            stream=False,
         )
-        return ModelResponse(content=result.message.content or "", model=self.model)
+        return ModelResponse(
+            content=result.message.content or "",
+            model=self.model,
+            tool_calls=[
+                ToolCall(name=call.function.name, arguments=dict(call.function.arguments))
+                for call in (result.message.tool_calls or [])
+            ],
+            thinking=getattr(result.message, "thinking", None),
+        )

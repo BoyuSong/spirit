@@ -1,17 +1,38 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class ToolCall:
+    name: str
+    arguments: dict[str, Any]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"function": {"name": self.name, "arguments": self.arguments}}
 
 
 @dataclass
 class ModelRequest:
-    messages: list[dict[str, str]]
+    messages: list[dict[str, Any]]
     temperature: float = 0.3
+    tools: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
 class ModelResponse:
     content: str
     model: str
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    thinking: str | None = None
+
+    def as_message(self) -> dict[str, Any]:
+        message: dict[str, Any] = {"role": "assistant", "content": self.content}
+        if self.tool_calls:
+            message["tool_calls"] = [call.as_dict() for call in self.tool_calls]
+        if self.thinking:
+            message["thinking"] = self.thinking
+        return message
 
 
 class ModelProvider(ABC):
