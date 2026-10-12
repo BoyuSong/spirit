@@ -1,0 +1,17 @@
+README.md
+pyproject.toml
+src/ai_companion.egg-info/PKG-INFO
+src/ai_companion.egg-info/SOURCES.txt
+src/ai_companion.egg-info/dependency_links.txt
+src/ai_companion.egg-info/requires.txt
+src/ai_companion.egg-info/top_level.txt
+src/companion/__init__.py
+src/companion/__main__.py
+src/companion/models/__init__.py
+src/companion/models/base.py
+src/companion/models/gateway.py
+src/companion/models/registry.py
+src/companion/models/router.py
+src/companion/models/providers/__init__.py
+src/companion/models/providers/ollama.py
+tests/test_router.py

@@ -1,0 +1,9 @@
+models:
+  primary:
+    provider: ollama
+    model: qwen3:8b
+    host: http://127.0.0.1:11434
+  coding:
+    provider: ollama
+    model: qwen3:8b
+    host: http://127.0.0.1:11434

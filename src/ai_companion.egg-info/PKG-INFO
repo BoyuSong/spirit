@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: ai-companion
+Version: 0.1.0
+Requires-Python: >=3.12
+Requires-Dist: ollama>=0.4
+Requires-Dist: pydantic>=2
+Requires-Dist: PyYAML>=6
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
