@@ -1,0 +1,77 @@
+ai-companion/
+│
+├── src/
+│   └── companion/
+│       │
+│       ├── core/
+│       │   ├── orchestrator.py
+│       │   ├── task.py
+│       │   ├── event_bus.py
+│       │   └── scheduler.py
+│       │
+│       ├── models/
+│       │   ├── base.py
+│       │   ├── gateway.py
+│       │   ├── registry.py
+│       │   ├── router.py
+│       │   ├── resource_manager.py
+│       │   └── providers/
+│       │       ├── ollama.py
+│       │       └── openai_compatible.py
+│       │
+│       ├── tools/
+│       │   ├── registry.py
+│       │   ├── system.py
+│       │   ├── processes.py
+│       │   └── files.py
+│       │
+│       ├── security/
+│       │   └── policy.py
+│       │
+│       ├── memory/
+│       │   └── sqlite.py
+│       │
+│       ├── notifications/
+│       │   └── manager.py
+│       │
+│       ├── api/
+│       │   └── server.py
+│       │
+│       └── main.py
+│
+├── config/
+│   ├── models.yaml
+│   ├── agent.yaml
+│   └── permissions.yaml
+│
+├── tests/
+├── pyproject.toml
+└── README.md
+
+too be scheduled:
+apps/
+  └── desktop/
+       ├── live2d/
+       ├── chat/
+       └── dashboard/
+
+Model Gateway
+├── ModelRegistry
+│   ├── primary
+│   ├── coding
+│   ├── reasoning
+│   └── vision
+├── ModelRouter
+│   ├── Capability Matching
+│   ├── Privacy Policy
+│   ├── Availability Check
+│   └── Fallback Strategy
+├── Providers
+│   ├── OllamaProvider
+│   ├── OpenAICompatibleProvider
+│   └── CustomProvider
+└── ResourceManager
+    ├── Model Loading
+    ├── GPU Budget
+    ├── Idle Unloading
+    └── Concurrency Limits
