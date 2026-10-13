@@ -4,6 +4,7 @@ models:
     model: qwen3:8b
     host: http://127.0.0.1:11434
   coding:
-    provider: ollama
-    model: qwen3:8b
-    host: http://127.0.0.1:11434
+    provider: openai
+    model: gpt-6.1-sol
+    base_url: https://api.openai.com/v1
+    api_key_env: CODING_API_KEY
