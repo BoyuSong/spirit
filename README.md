@@ -1,6 +1,12 @@
-# Live2D Companion MVP (Windows)
+# AI Companion
 
-可运行的 Windows 桌宠基础骨架：透明无边框窗口、拖动/点击、系统托盘、状态面板、Ollama Qwen3 聊天、CPU/内存/磁盘/NVIDIA GPU 采样、内存阈值通知、SQLite 事件日志。
+当前仓库实现的是 **Agent Core**：Model Gateway、命令行聊天、只读系统状态工具和有界工具调用循环。安装、使用和测试见 [Agent 开发说明](README1.md)。
+
+以下为 Windows 桌宠阶段的设计说明；当前代码尚未包含这一阶段的入口、依赖或 UI。
+
+## Live2D Companion MVP (Windows) 设计
+
+桌宠阶段目标：透明无边框窗口、拖动/点击、系统托盘、状态面板、Ollama Qwen3 聊天、CPU/内存/磁盘/NVIDIA GPU 采样、内存阈值通知、SQLite 事件日志。
 
 **当前不包含 Live2D SDK 和模型**。默认显示可交互占位角色；Live2D 渲染接入说明见 `live2d/README.md`。
 
