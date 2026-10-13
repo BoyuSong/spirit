@@ -7,9 +7,13 @@ from typing import Any
 class ToolCall:
     name: str
     arguments: dict[str, Any]
+    id: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {"function": {"name": self.name, "arguments": self.arguments}}
+        call: dict[str, Any] = {"function": {"name": self.name, "arguments": self.arguments}}
+        if self.id:
+            call["id"] = self.id
+        return call
 
 
 @dataclass
@@ -25,6 +29,7 @@ class ModelResponse:
     model: str
     tool_calls: list[ToolCall] = field(default_factory=list)
     thinking: str | None = None
+    provider_items: list[dict[str, Any]] = field(default_factory=list)
 
     def as_message(self) -> dict[str, Any]:
         message: dict[str, Any] = {"role": "assistant", "content": self.content}
@@ -32,6 +37,8 @@ class ModelResponse:
             message["tool_calls"] = [call.as_dict() for call in self.tool_calls]
         if self.thinking:
             message["thinking"] = self.thinking
+        if self.provider_items:
+            message["provider_items"] = self.provider_items
         return message
 
 

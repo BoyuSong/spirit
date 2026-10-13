@@ -7,6 +7,8 @@ class ModelConfig(BaseModel):
     provider: str
     model: str
     host: str = "http://127.0.0.1:11434"
+    base_url: str = "https://api.openai.com/v1"
+    api_key_env: str = "CODING_API_KEY"
 
 
 class RegistryConfig(BaseModel):

@@ -66,10 +66,13 @@ class Agent:
             history.append(response.as_message())
             for call in response.tool_calls:
                 result = await self.tools.execute(call)
-                history.append({
+                tool_message = {
                     "role": "tool",
                     "tool_name": call.name,
                     "content": json.dumps(result, ensure_ascii=False, allow_nan=False),
-                })
+                }
+                if call.id:
+                    tool_message["tool_call_id"] = call.id
+                history.append(tool_message)
                 calls += 1
         raise AssertionError("Unreachable agent state")
