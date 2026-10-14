@@ -163,3 +163,71 @@ def test_noninteractive_terminal_never_approves(tmp_path, monkeypatch):
     approvals = ApprovalManager(tmp_path / 'audit')
     with pytest.raises(ToolError, match='declined'):
         asyncio.run(approvals.require('delete_file', {'path': 'file'}))
+
+
+def test_automatic_system_policy_deletes_and_restores_without_prompt(tmp_path):
+    from companion.tools.files import RestoreArguments
+    system = files(tmp_path)
+    system.approvals.terminal = False
+    system.approvals.policies['system'] = 'automatic'
+    (tmp_path / 'file.txt').write_text('recoverable')
+    result = asyncio.run(system.delete_file(PathArguments(path='file.txt')))
+    assert not (tmp_path / 'file.txt').exists()
+    restored = asyncio.run(system.restore_file(RestoreArguments(restore_id=result['restore_id'])))
+    assert restored == {'status': 'restored', 'path': 'file.txt'}
+    assert (tmp_path / 'file.txt').read_text() == 'recoverable'
+    assert not system.approvals.pending
+    with pytest.raises(ToolError, match='missing'):
+        asyncio.run(system.restore_file(RestoreArguments(restore_id=result['restore_id'])))
+
+
+def test_restore_never_overwrites_recreated_file(tmp_path):
+    from companion.tools.files import RestoreArguments
+    system = files(tmp_path)
+    (tmp_path / 'file.txt').write_text('old')
+    result = asyncio.run(system.delete_file(PathArguments(path='file.txt')))
+    (tmp_path / 'file.txt').write_text('new')
+    with pytest.raises(ToolError, match='absent'):
+        asyncio.run(system.restore_file(RestoreArguments(restore_id=result['restore_id'])))
+    assert (tmp_path / 'file.txt').read_text() == 'new'
+    assert (tmp_path / '.agent-internal/trash' / result['restore_id']).read_text() == 'old'
+
+
+def test_automatic_download_has_no_pending_approval(tmp_path):
+    def endpoint(request):
+        return httpx.Response(200, content=b'downloaded')
+    system = files(tmp_path, endpoint=endpoint)
+    system.approvals.terminal = False
+    system.approvals.policies['system'] = 'automatic'
+    result = asyncio.run(system.download_file(DownloadArguments(url='https://example.org/file', path='new')))
+    assert result['status'] == 'downloaded'
+    assert not system.approvals.pending
+    assert (tmp_path / 'new').read_bytes() == b'downloaded'
+
+
+def test_read_pagination_preserves_multibyte_text_and_bom(tmp_path):
+    from companion.tools.files import ReadArguments
+    original = '你' * 16000
+    (tmp_path / 'text.txt').write_text(original, encoding='utf-8-sig')
+    system = files(tmp_path)
+    first = asyncio.run(system.read_text_file(ReadArguments(path='text.txt')))
+    second = asyncio.run(system.read_text_file(ReadArguments(path='text.txt', offset=first['next_offset'])))
+    assert first['text'] + second['text'] == original
+    assert second['next_offset'] is None
+
+
+def test_directory_creation_and_recovery_listing_follow_system_policy(tmp_path):
+    from companion.tools.registry import ToolArguments
+    system = files(tmp_path)
+    system.approvals.terminal = False
+    system.approvals.policies['system'] = 'automatic'
+    result = asyncio.run(system.make_directory(PathArguments(path='downloads/nested')))
+    assert result['status'] == 'created'
+    assert (tmp_path / 'downloads/nested').is_dir()
+    (tmp_path / 'recover.txt').write_text('contents not in listing')
+    deleted = asyncio.run(system.delete_file(PathArguments(path='recover.txt')))
+    listing = asyncio.run(system.list_recoverable_files(ToolArguments()))
+    assert len(listing['entries']) == 1
+    assert listing['entries'][0]['restore_id'] == deleted['restore_id']
+    assert listing['entries'][0]['path'] == 'recover.txt'
+    assert 'contents not in listing' not in json.dumps(listing)

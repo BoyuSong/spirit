@@ -35,3 +35,16 @@ def test_reader_limits_content_size_and_media(response, code):
     with pytest.raises(ToolError) as error:
         asyncio.run(reader.read(URLArguments(url='https://example.org')))
     assert error.value.code == code
+
+
+def test_web_title_links_and_pagination_are_recoverable_from_results():
+    from companion.tools.web import PageArguments
+    def endpoint(request):
+        return httpx.Response(200, headers={'Content-Type': 'text/html'}, text='<title>Documentation</title><p>abcdefghi</p><a href="/next">Next</a><a href="https://other.org/source">Source</a><a href="javascript:alert(1)">Ignore</a>')
+    reader = WebReader(['example.org'], transport=httpx.MockTransport(endpoint))
+    first = asyncio.run(reader.read(PageArguments(url='https://example.org/page', limit=10)))
+    second = asyncio.run(reader.read(PageArguments(url='https://example.org/page', offset=first['next_offset'], limit=24000)))
+    assert first['title'] == 'Documentation'
+    assert first['truncated'] and second['next_offset'] is None
+    assert first['text'] + second['text'] == 'Documentation abcdefghi Next Source Ignore'
+    assert first['links'] == [{'url': 'https://example.org/next', 'readable': True}, {'url': 'https://other.org/source', 'readable': False}]

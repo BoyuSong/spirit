@@ -7,7 +7,9 @@ from uuid import uuid4
 
 from companion.collaboration.config import CollaborationConfig
 from companion.collaboration.protocol import Envelope
-from companion.core.agent import Agent
+from companion.core.agent import Agent, AgentError
+from companion.models.base import ModelAPIError
+from companion.collaboration.discord import DiscordError
 from companion.tools.approval import ExecutionContext, execution_context
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -39,6 +41,13 @@ class TaskBus(Protocol):
 
 class WorkflowError(RuntimeError):
     pass
+
+
+def failure_message(role, error):
+    message = f"{role} step failed ({type(error).__name__})"
+    if isinstance(error, (AgentError, ModelAPIError, WorkflowError, DiscordError)):
+        message += f": {error}"
+    return message
 
 
 @dataclass
@@ -124,7 +133,7 @@ class WorkflowRunner:
                         await self.bus.publish(Envelope(
                             kind="error", job_id=job_id, task_id=expected_task, sender=role,
                             recipient=self.config.coordinator, step=step, expires_at=expires_at,
-                            content=f"{role} step failed ({type(exc).__name__})",
+                            content=failure_message(role, exc),
                         ))
                     else:
                         await self.bus.publish(Envelope(
@@ -204,7 +213,7 @@ class WorkflowRunner:
                             await self.bus.publish(Envelope(
                                 kind="error", job_id=job_id, task_id=task_id, sender=role,
                                 recipient=sender, step=step, expires_at=expires_at,
-                                content=f"{role} step failed ({type(exc).__name__})",
+                                content=failure_message(role, exc),
                             ))
                         else:
                             await self.bus.publish(Envelope(

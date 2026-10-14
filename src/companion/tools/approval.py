@@ -21,8 +21,8 @@ execution_context = ContextVar("execution_context", default=ExecutionContext())
 
 
 class ApprovalManager:
-    """Approvals originate from a terminal user or the initiating Discord operator."""
-    def __init__(self, audit_path: Path, *, terminal=True, notifier=None, timeout=300, confirmer=None):
+    """Apply configured policies; manual decisions come from the initiating human."""
+    def __init__(self, audit_path: Path, *, terminal=True, notifier=None, timeout=300, confirmer=None, policies=None):
         self.audit_path = audit_path
         self.terminal = terminal
         self.notifier = notifier
@@ -30,6 +30,7 @@ class ApprovalManager:
         self.pending = {}
         self.confirmer = confirmer
         self.denied = set()
+        self.policies = dict(policies or {})
 
     async def confirm_terminal(self, request):
         print(json.dumps(request, ensure_ascii=False, indent=2))
@@ -68,11 +69,14 @@ class ApprovalManager:
         if denial_key in self.denied:
             raise ToolError("approval_denied", "This action was already declined in this job")
         request = {"request_id": str(uuid4()), "owner": context.owner, "role": context.role,
-                   "action": action, "details": details, "job_id": context.job_id}
+                   "action": action, "details": details, "job_id": context.job_id,
+                   "approval_mode": self.policies.get(context.role, "manual")}
         self.audit(request, "requested")
         approved = False
         try:
-            if self.terminal:
+            if request["approval_mode"] == "automatic":
+                approved = True
+            elif self.terminal:
                 approved = await asyncio.wait_for((self.confirmer or self.confirm_terminal)(request), timeout=self.timeout)
             else:
                 future = asyncio.get_running_loop().create_future()

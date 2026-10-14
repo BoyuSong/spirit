@@ -1,11 +1,10 @@
 """Single Discord reader multiplexes jobs and handles human approvals independently."""
 import asyncio
-import json
 import re
 
-from companion.collaboration.discord import OperatorMessage
+from companion.collaboration.discord import DiscordError, OperatorMessage
 from companion.collaboration.protocol import Envelope
-from companion.collaboration.workflow import WorkflowRunner
+from companion.collaboration.workflow import WorkflowError, WorkflowRunner
 
 
 class JobMailbox:
@@ -44,9 +43,17 @@ class DiscordHub:
 
     async def notify_approval(self, request):
         bot_id = self.bus.bot_ids[request["role"]]
+        details = request["details"]
+        preview = "\n".join(f"{name}: {value}" for name, value in details.items()
+                            if name != "diff" and not isinstance(value, (dict, list)))
+        if details.get("command"):
+            preview += "\n命令：" + " ".join(details["command"])
+        if details.get("diff"):
+            preview += "\n修改预览：\n" + details["diff"]
         await self.bus.send_notice(request["role"],
             "需要发起用户批准（有效期 " + str(self.approvals.timeout) + " 秒）：\n"
-            + json.dumps(request, ensure_ascii=False, indent=2)
+            + f"操作：{request['action']}\n发起用户：{request['owner']}\n请求 ID：{request['request_id']}\n"
+            + preview
             + f"\n批准：<@{bot_id}> approve {request['request_id']}"
             + f"\n拒绝：<@{bot_id}> deny {request['request_id']}")
 
@@ -81,17 +88,20 @@ class DiscordHub:
         if not task.cancelled():
             error = task.exception()
             if error:
-                print(f"Discord job stopped ({type(error).__name__})")
+                detail = str(error) if isinstance(error, (DiscordError, WorkflowError)) else type(error).__name__
+                print(f"Discord job stopped: {detail}")
 
     async def run_job(self, event):
         try:
+            await self.bus.send_notice(event.role, "已收到，正在处理你的任务。")
             target = None if event.role == self.config.coordinator else event.role
             result = await WorkflowRunner(self.config, JobMailbox(self), self.agents).run(
                 event.text, target=target, owner=event.author_id,
             )
             await self.bus.send_notice(event.role, f"任务 {result.job_id}\n{result.content}")
         except Exception as exc:
-            await self.bus.send_notice(event.role, f"任务停止（{type(exc).__name__}）。未自动重试。")
+            detail = str(exc) if isinstance(exc, (WorkflowError, DiscordError)) else type(exc).__name__
+            await self.bus.send_notice(event.role, f"任务停止：{detail}。未自动重试。")
 
     async def tick(self):
         for event in await self.bus.poll_events():

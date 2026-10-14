@@ -34,10 +34,12 @@ class DiscordService:
             self.roles[token] = role
             self.ids[role] = str(index)
         monkeypatch.setenv(config.channel_env, "42")
+        if config.require_separate_bus:
+            monkeypatch.setenv(config.bus_channel_env, "43")
 
-    def add(self, author, content, attachments=None):
+    def add(self, author, content, attachments=None, channel='42'):
         message = {"id": str(len(self.messages) + 1), "author": {"id": author, "bot": True},
-                   "content": content, "attachments": attachments or []}
+                   "content": content, "attachments": attachments or [], "channel_id": channel}
         self.messages.append(message)
         return message
 
@@ -53,11 +55,12 @@ class DiscordService:
             return httpx.Response(200, json={"id": self.ids[role], "bot": True})
         if request.url.path.endswith("/applications/@me"):
             return httpx.Response(200, json={"flags": self.application_flags})
-        assert request.url.path == "/api/v10/channels/42/messages"
+        assert request.url.path in ("/api/v10/channels/42/messages", "/api/v10/channels/43/messages")
+        channel = request.url.path.split('/')[-2]
         if request.method == "GET":
             after = int(request.url.params.get("after", "0"))
             limit = int(request.url.params.get("limit", "100"))
-            messages = [message for message in self.messages if int(message["id"]) > after]
+            messages = [message for message in self.messages if int(message["id"]) > after and message['channel_id'] == channel]
             return httpx.Response(200, json=list(reversed(messages))[:limit])
         attachments = []
         if request.headers["Content-Type"].startswith("multipart/form-data"):
@@ -75,7 +78,7 @@ class DiscordService:
         assert payload["allowed_mentions"] == {"parse": []}
         assert payload["enforce_nonce"] is True
         assert len(payload["nonce"]) <= 25
-        return httpx.Response(200, json=self.add(self.ids[role], payload["content"], attachments))
+        return httpx.Response(200, json=self.add(self.ids[role], payload["content"], attachments, channel=channel))
 
 
 def envelope(**updates):
@@ -120,11 +123,13 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
     model_requests = []
     system_requests = []
+    coding_requests = []
     decisions = iter([
         {"action": "delegate", "agent": role, "task": "Check", "answer": None}
         for role in ("web", "system", "coding")
     ] + [{"action": "finish", "agent": None, "task": None, "answer": "Completed"}])
-    monkeypatch.setenv("SYSTEM_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("SYSTEM_WORKSPACE", str(tmp_path / "system"))
+    monkeypatch.setenv("CODING_WORKSPACE", str(tmp_path / "coding"))
 
     def models_endpoint(request):
         body = json.loads(request.content)
@@ -148,7 +153,24 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
             assert "tools" not in body
             text = json.dumps(next(decisions))
         elif model == registry.get("coding").model:
-            assert "tools" not in body
+            coding_requests.append(body)
+            names = {tool['name'] for tool in body['tools']}
+            assert {'write_project_file', 'apply_text_edit', 'run_python_tests'} <= names
+            assert 'delete_file' not in names
+            if len(coding_requests) == 1:
+                output = [
+                    {'type': 'function_call', 'call_id': 'write_code', 'name': 'write_project_file',
+                     'arguments': json.dumps({'path': 'addition.py', 'content': 'def add(a, b):\n    return a + b\n'})},
+                    {'type': 'function_call', 'call_id': 'write_test', 'name': 'write_project_file',
+                     'arguments': json.dumps({'path': 'tests/test_addition.py', 'content': 'import os\nfrom addition import add\ndef test_add():\n    assert add(2, 3) == 5\n    assert "CODING_API_KEY" not in os.environ\n'})},
+                ]
+                return httpx.Response(200, json={'status': 'completed', 'model': model, 'output': output})
+            elif len(coding_requests) == 2:
+                assert json.loads(body['input'][-1]['output'])['result']['status'] == 'written'
+                output = [{'type': 'function_call', 'call_id': 'run_test', 'name': 'run_python_tests',
+                           'arguments': json.dumps({'path': 'tests'})}]
+                return httpx.Response(200, json={'status': 'completed', 'model': model, 'output': output})
+            assert json.loads(body['input'][-1]['output'])['result']['passed'] is True
         elif model == registry.get("web").model:
             assert {tool["type"] for tool in body["tools"]} == {"web_search", "function"}
             annotations = [{"type": "url_citation", "url": "https://docs.python.org/3/"}]
@@ -186,8 +208,9 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
             assert result.content == "Completed"
             assert "https://docs.python.org/3/" in result.results["1:web"]
             assert len(set(model_requests)) == 4
-            assert len(model_requests) == 8
+            assert len(model_requests) == 10
             assert len(service.messages) == 14
+            assert (tmp_path / 'coding' / 'addition.py').is_file()
         finally:
             await bus.close()
 
