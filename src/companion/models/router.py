@@ -3,5 +3,5 @@ class ModelRouter:
         return {
             "chat": "primary", "coordinator": "primary", "coding": "coding",
             "review": "review", "research": "research",
-            "web": "web", "system": "system",
+            "web": "web", "system": "coding",
         }.get(task_type, "primary")

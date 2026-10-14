@@ -1,6 +1,6 @@
 # AI Companion — Cloud Functional Agents
 
-默认使用云端模型：主管、Coding、网站、系统四个功能 Bot。主管使用你选的 DeepSeek `deepseek-flash`，开启思考模式、推理力度 `high`；编码使用 OpenAI GPT6.1（`gpt-6.1-sol`）。系统和网站暂保留 OpenAI 占位配置，型号未定。你可以直接调度，也可以让主管按需分派；每个角色使用独立 Discord Bot，不需要安装或启动本地模型。
+默认使用云端模型，启用主管、Coding、网站三个功能 Bot。系统功能已并入 Coding，第四个 Agent 用途待定，不配置模型或 Token。主管使用你选的 DeepSeek `deepseek-flash`，开启思考模式、推理力度 `high`；Coding 使用 OpenAI GPT6.1（`gpt-6.1-sol`），同时负责代码与系统操作；网站暂保留 OpenAI 占位配置，型号未定。你可以直接调度，也可以让主管按需分派；每个启用角色使用独立 Discord Bot，不需要安装或启动本地模型。
 
 ## 安装与命令行
 
@@ -15,7 +15,7 @@ $env:PYTHONDONTWRITEBYTECODE = "1"
 .\.venv\Scripts\python.exe -m companion
 ```
 
-在环境设置安全提供主管的 `DEEPSEEK_API_KEY` 和 OpenAI 的 `CODING_API_KEY`。直接调用 Coding 只需 OpenAI Key。交互入口使用 `/chat`、`/coding`、`/web`、`/system`、`/role NAME`、`/exit`；角色分别保存已完成的会话历史。
+在环境设置安全提供主管的 `DEEPSEEK_API_KEY` 和 OpenAI 的 `CODING_API_KEY`。直接调用 Coding 只需 OpenAI Key。交互入口使用 `/chat`、`/coding`、`/web`、`/role NAME`、`/exit`；角色分别保存已完成的会话历史。旧 `/system`、`/role system` 和 `--agent system` 兼容转到 Coding，共用 Coding 的工具和历史；Discord 工作流的 `--agent system` 同样转到 Coding。
 
 本地运行时，在项目根目录（与 `pyproject.toml` 同级）复制并编辑 `.env`：
 
@@ -29,10 +29,10 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 也可直接运行单个功能：
 ```powershell
 .\.venv\Scripts\python.exe -m companion --agent coding "写一个配置加载器"
-.\.venv\Scripts\python.exe -m companion --agent system "查看 CPU 和内存状态"
+.\.venv\Scripts\python.exe -m companion --agent coding "查看 CPU 和内存状态"
 ```
 
-编码可读取项目、修改各类代码文件、按哈希校验做局部编辑，并调用本机运行时或编译器运行、构建和测试；网站具备联网搜索、网页标题/链接和分页读取；系统具备状态、目录和文件读取，以及下载、回收删除和恢复。Coding 和系统按你的当前选择自动执行，无需逐次批准，操作仍有日志。
+Coding 可读取项目、修改各类代码文件、按哈希校验做局部编辑，并调用本机运行时或编译器运行、构建和测试；同时具备系统状态、目录和文件读取，以及下载、回收删除和恢复工具。网站具备联网搜索、网页标题/链接和分页读取。Coding 按你的当前选择自动执行，无需逐次批准，操作仍有日志。
 
 在 `.env` 中配置 `CODING_WORKSPACE` 指向目标项目。默认 `.coding-workspace` 是独立演示目录；`SYSTEM_WORKSPACE` 默认 `.spirit-workspace`。例如 `CODING_WORKSPACE=D:/works/目标项目`。pytest 使用运行 Bot 的 Python 环境，目标项目依赖需要安装到该环境。文件工具约束工作区路径；执行测试仍以当前用户权限运行项目代码，不是操作系统沙箱。
 
@@ -42,7 +42,7 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 
 ## Discord 调度
 
-主管工作流和完整监听器需两家模型的 API Key、四个独立 Bot 的 Token、操作频道 `DISCORD_CHANNEL_ID` 和独立通信频道 `DISCORD_BUS_CHANNEL_ID`。新建一个普通文字频道供 Bot 交接任务，四个 Bot 在两个频道均需 View Channel、Read Message History、Send Messages、Attach Files；主管需 Message Content Intent。按 [配置与权限说明](docs/cloud-multi-agent.md) 设置。
+主管工作流和完整监听器需两家模型的 API Key、三个独立 Bot 的 Token、操作频道 `DISCORD_CHANNEL_ID` 和独立通信频道 `DISCORD_BUS_CHANNEL_ID`。新建一个普通文字频道供 Bot 交接任务，三个 Bot 在两个频道均需 View Channel、Read Message History、Send Messages、Attach Files；主管需 Message Content Intent。旧 `DISCORD_SYSTEM_BOT_TOKEN` 不再使用，保留在本地 `.env` 不影响启动。按 [配置与权限说明](docs/cloud-multi-agent.md) 设置。
 
 ```powershell
 # 主管按需分派
@@ -59,9 +59,9 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 
 Windows 可直接使用 `scripts/run-discord.bat` 启动监听器，`scripts/run-cli.bat` 启动命令行。这些脚本定位项目根目录并在退出时保留窗口，不需要把 PowerShell 语法写入 `.bat`。
 
-系统文件限定在 `SYSTEM_WORKSPACE`，云环境建议 `/workspace/spirit-runtime/system`；Coding 建议 `/workspace/spirit-runtime/coding`。删除移入应用回收区，返回 `restore_id`，可让系统 Bot 恢复；下载和恢复不覆盖现有目标。云端运行时操作云端机器。
+Coding 的系统文件工具使用 `SYSTEM_WORKSPACE`，云环境建议 `/workspace/spirit-runtime/system`；代码工具使用 `CODING_WORKSPACE`，建议 `/workspace/spirit-runtime/coding`。两个变量继续有效，由同一个 Bot 根据工具区分使用。删除移入应用回收区，返回 `restore_id`，可让 Coding 恢复；下载和恢复不覆盖现有目标。Discord 的系统任务也直接 @Coding，旧系统 Bot 不再由当前程序运行。云端运行时操作云端机器。
 
-执行策略由 `config/agents.yaml` 的角色 `approval_mode` 控制，目前 Coding、system 为 `automatic`。需要逐次批准时改为 `manual` 并重启：Discord 回复 `@功能Bot approve 请求ID` 或 `deny 请求ID`，命令行在终端确认。模型不能自行改变后端策略。
+执行策略由 `config/agents.yaml` 的角色 `approval_mode` 控制，目前 Coding 为 `automatic`，覆盖编码和系统操作。需要逐次批准时改为 `manual` 并重启：Discord 回复 `@Coding approve 请求ID` 或 `deny 请求ID`，命令行在终端确认。模型不能自行改变后端策略。
 
 完整的 [功能、配置、授权、扩展与限制](docs/cloud-multi-agent.md) 包含全部环境变量、网站域名、授权超时和回收恢复方式。API Key、Token 不写入仓库或聊天。
 

@@ -33,6 +33,8 @@ async def run(goal: str, target: str | None = None):
     load_environment(root)
     config = CollaborationConfig.load(root / "config" / "agents.yaml")
     registry = ModelRegistry(root / "config" / "models.yaml")
+    if target is not None:
+        target = config.resolve_agent(target)
     if target is not None and target not in config.agents:
         raise ValueError(f"Unknown agent: {target}")
     active_roles = [target] if target else None

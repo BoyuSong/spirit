@@ -36,6 +36,12 @@ class CollaborationConfig(BaseModel):
     task_timeout: float = Field(default=600.0, gt=0, le=3600, allow_inf_nan=False)
     context_limit: int = Field(default=64000, gt=0, le=64000)
 
+    def resolve_agent(self, role: str) -> str:
+        # Keep existing system CLI commands usable after merging it into coding.
+        if role == 'system' and role not in self.agents and 'coding' in self.agents:
+            return 'coding'
+        return role
+
     @model_validator(mode="after")
     def validate_roles(self):
         if any(not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", role) for role in self.agents):

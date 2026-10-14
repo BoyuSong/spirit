@@ -37,8 +37,8 @@ def test_only_authorized_human_mentions_create_dispatch_events(monkeypatch):
             await bus.initialize(require_operators=True)
             human(service, 'coding', 'Code')
             human(service, 'web', 'Find', author='998')
-            human(service, 'system', 'Delete', author='997')
-            human(service, 'system', 'approve fake', bot=True)
+            human(service, 'coding', 'Delete', author='997')
+            human(service, 'coding', 'approve fake', bot=True)
             human(service, 'coordinator', 'Task', author=service.ids['coding'])
             assert await bus.poll_events() == [OperatorMessage('coding', 'Code', '999'), OperatorMessage('web', 'Find', '998')]
             assert await bus.poll_events() == []
@@ -76,6 +76,19 @@ def test_direct_cli_bus_requires_only_target_bot(monkeypatch):
     asyncio.run(check())
 
 
+def test_legacy_system_workflow_targets_merged_coding_before_credentials(monkeypatch):
+    from companion import discord_workflow
+    class CheckedAlias(Exception):
+        pass
+    def check(config, registry, active_roles):
+        assert active_roles == ['coding']
+        assert 'system' not in config.agents
+        raise CheckedAlias
+    monkeypatch.setattr(discord_workflow, 'check_models', check)
+    with pytest.raises(CheckedAlias):
+        asyncio.run(discord_workflow.run('Check CPU', target='system'))
+
+
 async def until(hub, predicate, timeout=4):
     deadline = time.monotonic() + timeout
     while not predicate():
@@ -110,7 +123,7 @@ def test_human_can_direct_dispatch_or_ask_manager_via_mentions(monkeypatch, tmp_
     asyncio.run(check())
 
 
-def test_discord_approval_is_processed_while_system_worker_waits(monkeypatch, tmp_path):
+def test_discord_approval_is_processed_while_merged_coding_worker_waits(monkeypatch, tmp_path):
     config, service, bus = setup(monkeypatch)
     approvals = ApprovalManager(tmp_path / '.agent-internal/audit', terminal=False, timeout=5)
     files = SystemFiles(tmp_path, approvals, [])
@@ -121,29 +134,29 @@ def test_discord_approval_is_processed_while_system_worker_waits(monkeypatch, tm
             calls.append((role, execution_context.get()))
             result = await files.delete_file(PathArguments(path='target.txt'))
             return SimpleNamespace(response=ModelResponse(json.dumps(result), 'fake'))
-    hub = DiscordHub(config, bus, {'system': SystemAgent()}, approvals)
+    hub = DiscordHub(config, bus, {'coding': SystemAgent()}, approvals)
     async def check():
         try:
             await bus.initialize(require_operators=True)
-            human(service, 'system', 'Delete target.txt')
+            human(service, 'coding', 'Delete target.txt')
             await hub.tick()
             await until(hub, lambda: bool(approvals.pending))
             request_id = next(iter(approvals.pending))
             assert (tmp_path / 'target.txt').exists()
             assert calls[0][1].owner == '999'
-            assert calls[0][1].role == 'system'
-            human(service, 'system', f'approve {request_id}', author='998')
-            human(service, 'system', f'approve {request_id}', author='999', bot=True)
+            assert calls[0][1].role == 'coding'
+            human(service, 'coding', f'approve {request_id}', author='998')
+            human(service, 'coding', f'approve {request_id}', author='999', bot=True)
             await hub.tick()
             assert (tmp_path / 'target.txt').exists()
             assert not next(iter(approvals.pending.values()))[1].done()
-            human(service, 'system', f'approve {request_id}')
+            human(service, 'coding', f'approve {request_id}')
             await hub.tick()
             await until(hub, lambda: not hub.tasks)
             assert not (tmp_path / 'target.txt').exists()
             assert len(calls) == 1
             assert not approvals.pending
-            human(service, 'system', f'approve {request_id}')
+            human(service, 'coding', f'approve {request_id}')
             await hub.tick()
             assert len(calls) == 1
             assert '失效' in service.messages[-1]['content']
@@ -160,13 +173,13 @@ def test_concurrent_jobs_have_separate_owners_and_close_cancels_approvals(monkey
         async def run(self, role, messages):
             await approvals.require('delete_file', {'path': 'same'})
             raise AssertionError('No approval sent')
-    hub = DiscordHub(config, bus, {'system': WaitingAgent()}, approvals, max_active_jobs=2)
+    hub = DiscordHub(config, bus, {'coding': WaitingAgent()}, approvals, max_active_jobs=2)
     async def check():
         try:
             await bus.initialize(require_operators=True)
-            human(service, 'system', 'Delete', author='999')
-            human(service, 'system', 'Delete', author='998')
-            human(service, 'system', 'Busy', author='999')
+            human(service, 'coding', 'Delete', author='999')
+            human(service, 'coding', 'Delete', author='998')
+            human(service, 'coding', 'Busy', author='999')
             await hub.tick()
             assert len(hub.tasks) == 2
             assert '并发上限' in service.messages[-1]['content']
