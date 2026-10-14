@@ -1,18 +1,23 @@
 models:
   primary:
-    provider: openai
-    model: gpt-6-luna
-    api_key_env: CODING_API_KEY
+    provider: deepseek
+    model: deepseek-flash
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+    thinking: enabled
+    reasoning_effort: high
   coding:
     provider: openai
     model: gpt-6.1-sol
     base_url: https://api.openai.com/v1
     api_key_env: CODING_API_KEY
   system:
+    # Temporary placeholder: user has not selected the system model yet.
     provider: openai
     model: gpt-6-sol
     api_key_env: CODING_API_KEY
   web:
+    # Temporary placeholder: user has not selected the web model yet.
     provider: openai
     model: gpt-6-astra
     api_key_env: CODING_API_KEY
