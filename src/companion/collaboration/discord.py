@@ -3,6 +3,8 @@ import hashlib
 import json
 import math
 import os
+import re
+from dataclasses import dataclass
 import time
 
 import httpx
@@ -14,6 +16,13 @@ from companion.collaboration.protocol import Envelope, MAX_BYTES, PREFIX
 
 class DiscordError(RuntimeError):
     pass
+
+
+@dataclass
+class OperatorMessage:
+    role: str
+    text: str
+    author_id: str
 
 
 class BotClient:
@@ -79,9 +88,9 @@ class BotClient:
 
 
 class DiscordBus:
-    """One registered bot identity per role, with a coordinator reading the bus."""
+    """One registered bot identity per role, with one selected bot reading the bus."""
 
-    def __init__(self, config: CollaborationConfig, *, transport=None):
+    def __init__(self, config: CollaborationConfig, *, transport=None, observer=None):
         self.config = config
         self.clients = {
             role: BotClient(spec.token_env, transport=transport)
@@ -90,26 +99,40 @@ class DiscordBus:
         self.bot_ids: dict[str, str] = {}
         self.channel_id = ""
         self.cursor = "0"
+        self.observer = observer or config.coordinator
+        self.operator_ids = set()
 
-    async def initialize(self):
-        missing = [spec.token_env for spec in self.config.agents.values() if not os.environ.get(spec.token_env)]
+    async def initialize(self, *, active_roles=None, require_operators=False):
+        roles = set(active_roles or self.config.agents)
+        if self.observer not in roles or not roles.issubset(self.config.agents):
+            raise DiscordError("Observer and active roles must be registered")
+        raw_operators = os.environ.get(self.config.operator_env, "")
+        self.operator_ids = {part.strip() for part in raw_operators.split(",") if part.strip()}
+        if any(not value.isdigit() or int(value) <= 0 for value in self.operator_ids):
+            raise DiscordError(f"Invalid operator IDs in {self.config.operator_env}")
+        if require_operators and not self.operator_ids:
+            raise DiscordError(f"Configure authorized human IDs in {self.config.operator_env}")
+        missing = [self.config.agents[role].token_env for role in roles if not os.environ.get(self.config.agents[role].token_env)]
         channel = os.environ.get(self.config.channel_env, "")
         if missing or not channel.isdigit() or int(channel) <= 0:
             names = missing + ([self.config.channel_env] if not channel.isdigit() or int(channel) <= 0 else [])
             raise DiscordError(f"Configure environment settings: {', '.join(names)}")
         self.channel_id = channel
+        self.bot_ids = {}
         for role, client in self.clients.items():
+            if role not in roles:
+                continue
             identity = await client.request("GET", "/users/@me")
             if not identity.get("bot") or not str(identity.get("id", "")).isdigit():
                 raise DiscordError(f"{role} must use a genuine Discord bot account")
             self.bot_ids[role] = str(identity["id"])
         if len(set(self.bot_ids.values())) != len(self.bot_ids):
             raise DiscordError("Each model role must use a different Discord bot")
-        application = await self.clients[self.config.coordinator].request("GET", "/applications/@me")
+        application = await self.clients[self.observer].request("GET", "/applications/@me")
         if not int(application.get("flags", 0)) & ((1 << 18) | (1 << 19)):
-            raise DiscordError("Enable Message Content Intent for the coordinator bot in Discord Developer Portal")
+            raise DiscordError(f"Enable Message Content Intent for the {self.observer} bot in Discord Developer Portal")
         # Ignore old jobs at startup; this runner does not resume interrupted jobs.
-        latest = await self.clients[self.config.coordinator].request(
+        latest = await self.clients[self.observer].request(
             "GET", f"/channels/{self.channel_id}/messages", params={"limit": 1},
         )
         if latest:
@@ -137,8 +160,25 @@ class DiscordBus:
                 files={"files[0]": ("agent-task.json", data, "application/json")},
             )
 
+    async def send_notice(self, role: str, content: str):
+        payload = {"allowed_mentions": {"parse": []}, "nonce": uuid_nonce(), "enforce_nonce": True}
+        path = f"/channels/{self.channel_id}/messages"
+        if len(content.encode("utf-16-le")) // 2 <= 2000:
+            await self.clients[role].request("POST", path, json={**payload, "content": content})
+        else:
+            data = content.encode("utf-8")
+            if len(data) > MAX_BYTES:
+                raise DiscordError("Notice exceeds the attachment budget")
+            await self.clients[role].request("POST", path,
+                data={"payload_json": json.dumps({**payload, "content": "详细结果见附件。",
+                    "attachments": [{"id": 0, "filename": "agent-result.txt"}]})},
+                files={"files[0]": ("agent-result.txt", data, "text/plain; charset=utf-8")})
+
     async def poll(self) -> list[Envelope]:
-        client = self.clients[self.config.coordinator]
+        return [event for event in await self.poll_events() if isinstance(event, Envelope)]
+
+    async def poll_events(self) -> list[Envelope | OperatorMessage]:
+        client = self.clients[self.observer]
         messages = await client.request(
             "GET", f"/channels/{self.channel_id}/messages", params={"after": self.cursor, "limit": 100},
         )
@@ -148,10 +188,18 @@ class DiscordBus:
             if int(message_id) <= int(self.cursor):
                 continue
             author = str(message.get("author", {}).get("id", ""))
+            content = message.get("content", "")
+            if author in self.operator_ids and not message.get("author", {}).get("bot", False) and author not in self.bot_ids.values():
+                match = re.fullmatch(r"<@!?(\d+)>\s+([\s\S]{1,32000})", content.strip())
+                if match:
+                    role = next((name for name, bot_id in self.bot_ids.items() if bot_id == match[1]), None)
+                    if role and match[2].strip():
+                        envelopes.append(OperatorMessage(role, match[2].strip(), author))
+                self.cursor = message_id
+                continue
             if author not in self.bot_ids.values():
                 self.cursor = message_id
                 continue
-            content = message.get("content", "")
             if not content.startswith(PREFIX):
                 self.cursor = message_id
                 continue
@@ -181,3 +229,8 @@ class DiscordBus:
     async def close(self):
         for client in self.clients.values():
             await client.close()
+
+
+def uuid_nonce():
+    from uuid import uuid4
+    return uuid4().hex[:24]

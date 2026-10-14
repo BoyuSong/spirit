@@ -21,6 +21,7 @@ class ModelRequest:
     messages: list[dict[str, Any]]
     temperature: float = 0.3
     tools: list[dict[str, Any]] = field(default_factory=list)
+    response_format: dict[str, Any] | None = None
 
 
 @dataclass

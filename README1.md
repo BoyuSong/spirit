@@ -1,8 +1,10 @@
-# AI Companion — Cloud Multi-Agent
+# AI Companion — Cloud Functional Agents
 
-当前实现独立于桌宠 UI：云端模型角色路由、有界工具循环，以及四个独立 Discord Bot 的任务流水线。默认配置全部使用云端模型。
+默认使用云端模型：主管、Coding、网站、系统四个功能 Bot。你可以直接调度，也可以让主管按需分派；每个角色使用独立 Discord Bot。编码使用 OpenAI GPT6.1（`gpt-6.1-sol`），不需要安装或启动本地模型。
 
-Windows PowerShell:
+## 安装与命令行
+
+Windows PowerShell：
 
 ```powershell
 py -3.12 -m venv .venv
@@ -13,63 +15,37 @@ $env:PYTHONDONTWRITEBYTECODE = "1"
 .\.venv\Scripts\python.exe -m companion
 ```
 
-配置 API Key 后使用 `/chat`（协调）、`/coding`、`/review`、`/research` 切换云端模型。`/role NAME` 选择 `models.yaml` 中登记的其他模型配置键。`/exit` 退出。安装依赖时不使用 editable 模式，以保护已跟踪的 egg-info。
-
-可以输入“现在内存使用率是多少？”或“查看 CPU 和内存状态”。Agent 会把工具结果回填给模型，再显示最终回答。模型和 Bot 的初始分工见 [Discord 多模型设计](docs/cloud-multi-agent.md)。
-
-## 远程 coding 模型
-
-`config/models.yaml` 中的 `coding` 已配置为 OpenAI Responses API：
-
-```yaml
-coding:
-  provider: openai
-  model: gpt-6.1-sol
-  base_url: https://api.openai.com/v1
-  api_key_env: CODING_API_KEY
-```
-
-`gpt-6.1-sol` 是 [OpenAI 官方 SDK](https://github.com/openai/openai-python/blob/main/src/openai/types/shared/chat_model.py) 列出的 GPT6.1 模型 ID；你的 API 账户是否可用仍需实际验证。可修改 `model` 为账户可用的其他 Responses API 模型。
-
-在云环境设置中安全填写 `CODING_API_KEY` 并保存／发布相关配置。程序按 `api_key_env` 从环境读取凭据，仓库配置不存放 Key。本地 Windows 运行时，通过本机的凭据管理或进程环境提供同名变量。然后启动程序，输入 `/coding` 切换模型。
-
-远程请求使用 `store: false`，工具 schema 转换为 Responses API 的 function 定义；保留工具调用 ID 和加密 reasoning 输出，以支持多轮工具调用。默认使用模型自身的采样参数，不发送可能被 reasoning 模型拒绝的 `temperature`。
-
-命令行角色共享已完成的会话历史，调用时把可见历史及工具结果发送给对应云端模型。不同模型不会复用彼此的加密 reasoning；同一模型的工具回填保留其加密 reasoning。
-
-## Discord 多角色协作
-
-`config/agents.yaml` 登记角色、模型配置键、独立 Bot Token 变量名和流程。默认流程为“协调拆解 → 研究 → 编码 → 审查 → 协调汇总”。模型选择可在 `config/models.yaml` 修改。
-
-需要四个 Bot Token、`DISCORD_CHANNEL_ID` 和 API Key。在 Discord 配置频道权限及协调 Bot 的 Message Content Intent 后，主动运行：
+在环境设置安全提供 `CODING_API_KEY`。交互入口使用 `/chat`、`/coding`、`/web`、`/system`、`/role NAME`、`/exit`；角色分别保存已完成的会话历史。也可直接运行单个功能：
 
 ```powershell
-.\.venv\Scripts\python.exe -m companion.discord_workflow "设计一个带测试的配置加载器"
+.\.venv\Scripts\python.exe -m companion --agent coding "写一个配置加载器"
+.\.venv\Scripts\python.exe -m companion --agent system "查看 CPU 和内存状态"
 ```
 
-该命令会向所选频道发送任务和结果，调用云端模型。参数 `--help` 只显示帮助。配置步骤、预算、消息过滤和后续新增模型／Bot 的方式详见 [Discord 多模型设计](docs/cloud-multi-agent.md)。
+编码当前生成和检查代码，不执行代码或改写源文件；网站具备联网搜索和公开网页读取；系统具备状态、目录和文件读取，以及逐次批准后的下载和删除。
 
-Run tests:
+## Discord 调度
+
+设置四个独立 Bot 的 Token、频道 `DISCORD_CHANNEL_ID`，按 [配置与权限说明](docs/cloud-multi-agent.md) 添加 Bot 并开启 Message Content Intent。
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
+# 主管按需分派
+.\.venv\Scripts\python.exe -m companion.discord_workflow "查资料并设计一个配置加载器"
+# 直接调度指定功能 Bot
+.\.venv\Scripts\python.exe -m companion.discord_workflow --agent coding "写一个配置加载器"
+# 持续接收 @Bot 调度和批准消息，另需 DISCORD_OPERATOR_IDS
+.\.venv\Scripts\python.exe -m companion.discord_listener
 ```
 
-## Agent 行为
+监听器启动后，你可在配置频道 `@功能Bot 任务`，或 `@主管 任务`。命令会发送 Discord 消息，不会自动开机启动。主管无需调用全部角色；新增角色通过模型与 Agent 配置注册。
 
-- 唯一内置工具为 `get_system_status`，读取运行 Agent 的机器的 CPU 和内存状态，无参数。它查询的是实际运行机器；在云环境运行时不会读取你的 Windows 电脑。
-- CPU 使用率采样窗口为 0.1 秒，内存字段包含总量、可用量、已用量（字节）和使用率。
-- 只执行显式注册的工具；参数按 Pydantic schema 严格校验，拒绝未知字段和类型转换。
-- 默认每次用户请求最多 3 轮工具调用、累计 8 次调用；同一响应中的多个调用按顺序执行。超过次数限制时停止该轮对话。
-- 模型每次响应等待最多 120 秒，工具等待最多 5 秒。工具失败、超时或参数错误作为结构化结果回填，允许模型解释或在预算内修正。
-- 只有得到非空的最终回答后，才更新会话历史。模型失败、空回答或超限时保留此前完成的会话；这不会撤销已经执行的工具，因此当前仅提供只读工具。
-- 系统采样在线程中运行，避免阻塞异步调用；工具超时取消等待，不保证终止已经开始的线程。
+系统文件限定在 `SYSTEM_WORKSPACE`，默认 `.spirit-workspace`，云环境建议使用 `/workspace/spirit-runtime/system`。下载、删除必须由发起用户逐次批准；Discord 回复 `@system approve 请求ID` 或 `@system deny 请求ID`，命令行在终端确认。删除移入应用回收区，下载不覆盖现有文件。设置只限定工作区，不会读取云端之外你的 Windows 电脑。
 
-新增工具时，使用 `ToolArguments` 声明参数，并在 `ToolRegistry` 注册异步处理函数。当前没有提供写文件、执行 shell 或修改系统的工具。
+完整的 [功能、配置、授权、扩展与限制](docs/cloud-multi-agent.md) 包含全部环境变量、网站域名、授权超时和回收恢复方式。API Key、Token 不写入仓库或聊天。
 
-## 云环境／Linux 开发
+## 云环境开发与验证
 
-在仓库根目录运行。环境安装脚本使用外部虚拟环境，避免 editable 安装改写仓库里已跟踪的 egg-info：
+依赖安装到外部虚拟环境，避免 editable 安装改写已跟踪的 egg-info：
 
 ```bash
 python3 -m venv /workspace/.venvs/spirit
@@ -77,11 +53,8 @@ UV_CACHE_DIR=/workspace/.cache/uv uv pip install --python /workspace/.venvs/spir
 export PYTHONPATH="$PWD/src"
 export PYTHONDONTWRITEBYTECODE=1
 /workspace/.venvs/spirit/bin/python -m pytest -q -p no:cacheprovider
-/workspace/.venvs/spirit/bin/python -m companion
 ```
 
-测试不依赖真实模型，覆盖工具循环、超时、预算、会话历史、跨模型 reasoning 转换、OpenAI Responses、四 Bot 的 Discord HTTP 交接、新角色配置、长附件、消息过滤、重复消息和限流。集成测试使用模拟 HTTP 响应，不代表真实模型推理或 Discord 联调已通过。
+测试使用模拟 HTTP 和临时文件，验证调度、工具隔离、批准等待、文件操作及消息边界。真实模型访问、联网搜索和 Discord 联调仍需有效凭据、账户权限及频道权限；保存云环境草稿不会注入凭据或自动发布配置。
 
-真实运行需要 API Key、对应模型访问权限及额度。Discord 工作流另需独立 Bot Token、频道 ID 和权限。请验收云端普通聊天、角色切换、工具查询以及频道中的完整任务交接。Key 缺失时会报告变量名称，Discord 凭据缺失时不会发送任务。
-
-当前为有界串行工作流；尚未包含流式输出、模型自动重试／回退、持久化记忆／队列、并行 DAG、实际文件修改／代码执行、联网检索或桌宠 UI。
+当前 job 保存在内存中，重启不恢复中断任务。文件操作完成后不会因后续模型失败自动回滚，需查看审计和文件状态。尚未包含持久化队列、独立 worker、任意 shell、源码写入/执行、浏览器自动化或桌宠 UI。

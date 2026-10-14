@@ -13,6 +13,12 @@ class ToolArguments(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
+class ToolError(RuntimeError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
 @dataclass(frozen=True)
 class Tool:
     name: str
@@ -62,6 +68,8 @@ class ToolRegistry:
             return {"ok": True, "result": result}
         except TimeoutError:
             return self._error("tool_timeout", f"Tool timed out: {call.name}")
+        except ToolError as exc:
+            return self._error(exc.code, str(exc))
         except Exception as exc:
             return self._error("tool_failed", f"{call.name}: {type(exc).__name__}")
 

@@ -7,30 +7,37 @@ from pathlib import Path
 from companion.collaboration.config import CollaborationConfig
 from companion.collaboration.discord import DiscordBus
 from companion.collaboration.workflow import WorkflowRunner
-from companion.core.agent import Agent
+from companion.collaboration.factory import build_agents
 from companion.models.gateway import ModelGateway
 from companion.models.registry import ModelRegistry
-from companion.tools.system import default_tools
 
 
-async def run(goal: str):
-    root = Path(__file__).resolve().parents[2]
-    config = CollaborationConfig.load(root / "config" / "agents.yaml")
-    registry = ModelRegistry(root / "config" / "models.yaml")
+def check_models(config, registry, active_roles=None):
+    roles = active_roles or config.agents
     missing = set()
-    for spec in config.agents.values():
-        model = registry.get(spec.model_role)
+    for role in roles:
+        model = registry.get(config.agents[role].model_role)
         if model.provider != "openai":
             raise ValueError("Discord workers currently require cloud OpenAI models")
         if not os.environ.get(model.api_key_env):
             missing.add(model.api_key_env)
     if missing:
         raise ValueError(f"Configure model credentials in environment settings: {', '.join(sorted(missing))}")
-    bus = DiscordBus(config)
+
+
+async def run(goal: str, target: str | None = None):
+    root = Path(__file__).resolve().parents[2]
+    config = CollaborationConfig.load(root / "config" / "agents.yaml")
+    registry = ModelRegistry(root / "config" / "models.yaml")
+    if target is not None and target not in config.agents:
+        raise ValueError(f"Unknown agent: {target}")
+    active_roles = [target] if target else None
+    check_models(config, registry, active_roles)
+    bus = DiscordBus(config, observer=target)
     try:
-        await bus.initialize()
-        agent = Agent(ModelGateway(registry), default_tools())
-        result = await WorkflowRunner(config, bus, agent).run(goal)
+        await bus.initialize(active_roles=active_roles)
+        agents = build_agents(config, ModelGateway(registry))
+        result = await WorkflowRunner(config, bus, agents).run(goal, target=target)
         print(f"Job {result.job_id}\n{result.content}")
     finally:
         await bus.close()
@@ -39,9 +46,10 @@ async def run(goal: str):
 def main():
     parser = argparse.ArgumentParser(description="Run a cloud-model task using independent Discord bots")
     parser.add_argument("goal", help="Task goal; starting this command posts tasks/results to Discord")
+    parser.add_argument("--agent", help="Dispatch directly to a functional bot, bypassing the manager")
     args = parser.parse_args()
     try:
-        asyncio.run(run(args.goal))
+        asyncio.run(run(args.goal, target=args.agent))
     except (RuntimeError, ValueError) as exc:
         parser.exit(1, f"Workflow error: {exc}\n")
 

@@ -1,6 +1,6 @@
 # AI Companion
 
-当前仓库实现的是 **云端多模型 Agent Core**：协调、编码、审查、研究四个角色，每个角色使用独立 Discord Bot，通过结构化任务和结果协作。默认配置全部使用云端模型，不需要拉取或启动本地模型。
+当前仓库实现的是 **云端多模型 Agent Core**：主管、编码、网站、系统四个功能 Bot，每个角色使用独立 Discord Bot。支持用户在 Discord @Bot 或命令行直接调度，也支持主管按需分派；系统下载和删除必须由发起用户逐次批准。默认全部使用云端模型。
 
 安装、使用和测试见 [Agent 开发说明](README1.md)，角色配置和新增 Bot 见 [Discord 多模型设计](docs/cloud-multi-agent.md)。
 
