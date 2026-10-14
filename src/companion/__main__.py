@@ -21,12 +21,13 @@ async def main(initial_role="coordinator", goal=None):
     gateway = ModelGateway(registry)
     agents = build_agents(config, gateway)
     histories = {role: [{"role": "system", "content": spec.prompt}] for role, spec in config.agents.items()}
-    role = initial_role
+    role = config.resolve_agent(initial_role)
     if role not in agents:
         registry.get(role)
         agents[role] = Agent(gateway, ToolRegistry())
         histories[role] = [{"role": "system", "content": "Answer honestly; distinguish proposed actions from executed actions."}]
-    print("AI Companion ready. /chat /coding /web /system; /role NAME; /exit. Manager dispatch: python -m companion.discord_workflow 'goal'")
+    shortcuts = ' '.join('/' + name for name in config.agents if name != config.coordinator)
+    print(f"AI Companion ready. /chat {shortcuts}; /role NAME; /exit. Manager dispatch: python -m companion.discord_workflow 'goal'")
     while True:
         try:
             user_input = goal if goal is not None else (await asyncio.to_thread(input, "You> ")).strip()
@@ -35,12 +36,13 @@ async def main(initial_role="coordinator", goal=None):
         if user_input == "/exit":
             break
         requested = None
-        if user_input in ("/chat", "/coordinator", "/coding", "/web", "/system"):
+        if user_input in ("/chat", "/coordinator", "/system") or user_input in {f"/{name}" for name in config.agents}:
             requested = "coordinator" if user_input in ("/chat", "/coordinator") else user_input[1:]
         elif user_input.startswith("/role "):
             requested = user_input[6:].strip()
             requested = next((name for name, spec in config.agents.items() if spec.model_role == requested), requested)
         if requested is not None:
+            requested = config.resolve_agent(requested)
             try:
                 if requested not in agents:
                     registry.get(requested)

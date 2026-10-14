@@ -115,6 +115,8 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
 
     root = Path(__file__).resolve().parents[1]
     config = CollaborationConfig.load(root / "config" / "agents.yaml")
+    assert set(config.agents) == {'coordinator', 'coding', 'web'}
+    monkeypatch.setenv('DISCORD_SYSTEM_BOT_TOKEN', 'unused-token')
     service = DiscordService(config, monkeypatch)
     bus = DiscordBus(config, transport=httpx.MockTransport(service.handle))
     registry = ModelRegistry(root / "config" / "models.yaml")
@@ -122,11 +124,10 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
     monkeypatch.setenv("CODING_API_KEY", "test-model-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
     model_requests = []
-    system_requests = []
     coding_requests = []
     decisions = iter([
         {"action": "delegate", "agent": role, "task": "Check", "answer": None}
-        for role in ("web", "system", "coding")
+        for role in ("web", "coding")
     ] + [{"action": "finish", "agent": None, "task": None, "answer": "Completed"}])
     monkeypatch.setenv("SYSTEM_WORKSPACE", str(tmp_path / "system"))
     monkeypatch.setenv("CODING_WORKSPACE", str(tmp_path / "coding"))
@@ -155,10 +156,11 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
         elif model == registry.get("coding").model:
             coding_requests.append(body)
             names = {tool['name'] for tool in body['tools']}
-            assert {'write_project_file', 'apply_text_edit', 'run_python_tests'} <= names
-            assert 'delete_file' not in names
+            assert {'write_project_file', 'apply_text_edit', 'run_python_tests', 'run_project_command'} <= names
+            assert {'get_system_status', 'delete_file', 'restore_file'} <= names
             if len(coding_requests) == 1:
                 output = [
+                    {'type': 'function_call', 'call_id': 'call_status', 'name': 'get_system_status', 'arguments': '{}'},
                     {'type': 'function_call', 'call_id': 'write_code', 'name': 'write_project_file',
                      'arguments': json.dumps({'path': 'addition.py', 'content': 'def add(a, b):\n    return a + b\n'})},
                     {'type': 'function_call', 'call_id': 'write_test', 'name': 'write_project_file',
@@ -166,23 +168,17 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
                 ]
                 return httpx.Response(200, json={'status': 'completed', 'model': model, 'output': output})
             elif len(coding_requests) == 2:
+                status = next(item for item in body['input'] if item.get('call_id') == 'call_status' and item['type'] == 'function_call_output')
+                assert json.loads(status['output'])['result']['memory']['total_bytes'] > 0
                 assert json.loads(body['input'][-1]['output'])['result']['status'] == 'written'
-                output = [{'type': 'function_call', 'call_id': 'run_test', 'name': 'run_python_tests',
-                           'arguments': json.dumps({'path': 'tests'})}]
+                output = [{'type': 'function_call', 'call_id': 'run_test', 'name': 'run_project_command',
+                           'arguments': json.dumps({'command': ['python', '-m', 'pytest', '-q', '-p', 'no:cacheprovider', 'tests']})}]
                 return httpx.Response(200, json={'status': 'completed', 'model': model, 'output': output})
-            assert json.loads(body['input'][-1]['output'])['result']['passed'] is True
+            tested = json.loads(body['input'][-1]['output'])['result']
+            assert tested['success'] is True and '1 passed' in tested['output']
         elif model == registry.get("web").model:
             assert {tool["type"] for tool in body["tools"]} == {"web_search", "function"}
             annotations = [{"type": "url_citation", "url": "https://docs.python.org/3/"}]
-        elif model == registry.get("system").model:
-            system_requests.append(body)
-            assert all(tool["type"] == "function" for tool in body["tools"])
-            if len(system_requests) == 1:
-                output = [{"type": "function_call", "call_id": "call_status", "name": "get_system_status", "arguments": "{}"}]
-                return httpx.Response(200, json={"status": "completed", "model": model, "output": output})
-            result = json.loads(body["input"][-1]["output"])
-            assert result["ok"] is True
-            assert result["result"]["memory"]["total_bytes"] > 0
         if request.url.host == "api.deepseek.com":
             return httpx.Response(200, json={"model": model, "choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]})
         output = [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text, "annotations": annotations}]}]
@@ -207,9 +203,9 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
             result = await WorkflowRunner(config, bus, build_agents(config, gateway)).run("Review system monitoring code")
             assert result.content == "Completed"
             assert "https://docs.python.org/3/" in result.results["1:web"]
-            assert len(set(model_requests)) == 4
-            assert len(model_requests) == 10
-            assert len(service.messages) == 14
+            assert len(set(model_requests)) == 3
+            assert len(model_requests) == 7
+            assert len(service.messages) == 10
             assert (tmp_path / 'coding' / 'addition.py').is_file()
         finally:
             await bus.close()

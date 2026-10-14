@@ -2,11 +2,12 @@ import asyncio
 import hashlib
 import json
 from pathlib import Path
+import shutil
 
 import pytest
 
 from companion.tools.approval import ApprovalManager, ExecutionContext, execution_context
-from companion.tools.coding import CodingFiles, EditArguments, TestArguments as RunArguments, WriteArguments
+from companion.tools.coding import CodingFiles, CommandArguments, EditArguments, TestArguments as RunArguments, WriteArguments
 from companion.tools.files import PathArguments, ReadArguments
 from companion.tools.registry import ToolError
 
@@ -152,3 +153,87 @@ def test_coding_writes_wait_until_running_tests_finish(project):
         assert written['status'] == 'written'
     asyncio.run(check())
     assert path.read_text() == 'value = 2\n'
+
+
+def test_generic_command_runs_file_in_selected_directory_and_keeps_arguments_literal(project, monkeypatch):
+    monkeypatch.setenv('CODING_API_KEY', 'private-test-value')
+    monkeypatch.setenv('DISCORD_CODING_BOT_TOKEN', 'private-test-value')
+    folder = project.root / 'folder with spaces'
+    folder.mkdir()
+    (folder / 'check.py').write_text('import os, sys\nfrom pathlib import Path\nassert "CODING_API_KEY" not in os.environ\nassert "DISCORD_CODING_BOT_TOKEN" not in os.environ\nassert Path.cwd().name == "folder with spaces"\nprint(sys.argv[1])\n')
+    literal = 'hello; echo unexpected > injected.txt'
+    result = asyncio.run(project.run_project_command(CommandArguments(path='folder with spaces', command=['python', 'check.py', literal])))
+    assert result['success'] and result['exit_code'] == 0
+    assert literal in result['output'] and not (folder / 'injected.txt').exists()
+    assert 'passed' not in result  # Command success does not claim tests ran.
+    events = [json.loads(line) for line in project.approvals.audit_path.read_text().splitlines()]
+    assert events[-1]['action'] == 'run_project_command'
+
+
+def test_generic_command_reports_failure_missing_executable_and_timeout(project):
+    (project.root / 'failure.py').write_text('import sys\nprint("actual failure")\nsys.exit(7)\n')
+    result = asyncio.run(project.run_project_command(CommandArguments(command=['python', 'failure.py'])))
+    assert result['exit_code'] == 7 and not result['success'] and 'actual failure' in result['output']
+    with pytest.raises(ToolError, match='Executable not found'):
+        asyncio.run(project.run_project_command(CommandArguments(command=['spirit_nonexistent_compiler_9876'])))
+    (project.root / 'slow.py').write_text('import time\nprint("started", flush=True)\ntime.sleep(10)\n')
+    result = asyncio.run(project.run_project_command(CommandArguments(command=['python', 'slow.py'], timeout_seconds=1)))
+    assert result['timed_out'] and not result['success'] and 'started' in result['output']
+
+
+@pytest.mark.parametrize('path', ['../outside', '.git', '.agent-internal'])
+def test_generic_command_working_directory_must_be_inside_project(project, path):
+    with pytest.raises(ToolError):
+        asyncio.run(project.run_project_command(CommandArguments(path=path, command=['python', '--version'])))
+    assert not project.approvals.audit_path.exists()
+
+
+def test_generic_command_rejects_bad_arguments_and_can_be_denied(project):
+    with pytest.raises(ToolError, match='NUL'):
+        asyncio.run(project.run_project_command(CommandArguments(command=['python', '\x00'])))
+    project.approvals.policies['coding'] = 'manual'
+    project.approvals.terminal = True
+    async def deny(request):
+        assert request['details']['cwd'] == str(project.root)
+        return False
+    project.approvals.confirmer = deny
+    (project.root / 'touch.py').write_text('from pathlib import Path\nPath("ran").touch()\n')
+    with pytest.raises(ToolError, match='declined'):
+        asyncio.run(project.run_project_command(CommandArguments(command=['python', 'touch.py'])))
+    assert not (project.root / 'ran').exists()
+
+
+@pytest.mark.skipif(shutil.which('node') is None, reason='Node.js is not installed')
+def test_generic_command_creates_and_runs_real_javascript_tests(project):
+    content = "const {test} = require('node:test');\nconst assert = require('node:assert/strict');\ntest('addition', () => assert.equal(1 + 2, 3));\n"
+    asyncio.run(project.write_project_file(WriteArguments(path='addition.test.cjs', content=content)))
+    result = asyncio.run(project.run_project_command(CommandArguments(command=['node', '--test', '--test-reporter=tap', 'addition.test.cjs'])))
+    assert result['success'] and '# pass 1' in result['output']
+    digest = hashlib.sha256((project.root / 'addition.test.cjs').read_bytes()).hexdigest()
+    asyncio.run(project.write_project_file(WriteArguments(path='addition.test.cjs', content=content.replace('1 + 2, 3', '1 + 2, 4'), expected_sha256=digest)))
+    result = asyncio.run(project.run_project_command(CommandArguments(command=['node', '--test', '--test-reporter=tap', 'addition.test.cjs'])))
+    assert not result['success'] and '# fail 1' in result['output']
+
+
+@pytest.mark.skipif(shutil.which('node') is None or shutil.which('npm') is None, reason='Node/npm are not installed')
+def test_generic_npm_command_runs_existing_script(project):
+    (project.root / 'package.json').write_text(json.dumps({'scripts': {'test': 'node --test --test-reporter=tap example.test.cjs'}}))
+    (project.root / 'example.test.cjs').write_text("require('node:test').test('ok', () => {});\n")
+    result = asyncio.run(project.run_project_command(CommandArguments(command=['npm', 'test'])))
+    assert result['success'] and '# pass 1' in result['output']
+    assert Path(result['command'][1]).name == 'npm-cli.js'
+
+
+@pytest.mark.skipif(shutil.which('gcc') is None, reason='GCC is not installed')
+def test_generic_command_compiles_c_and_executes_project_binary(project):
+    asyncio.run(project.write_project_file(WriteArguments(path='addition.c', content='#include <stdio.h>\nint main(void) { printf("%d\\n", 1 + 2); return 0; }\n')))
+    compiled = asyncio.run(project.run_project_command(CommandArguments(command=['gcc', 'addition.c', '-o', 'addition.exe'])))
+    assert compiled['success'], compiled['output']
+    executed = asyncio.run(project.run_project_command(CommandArguments(command=['./addition.exe'])))
+    assert executed['success'] and executed['output'].strip() == '3'
+
+
+def test_generic_command_rejects_relative_executable_escape(project):
+    with pytest.raises(ToolError, match='outside'):
+        asyncio.run(project.run_project_command(CommandArguments(command=['../outside-tool'])))
+    assert not project.approvals.audit_path.exists()

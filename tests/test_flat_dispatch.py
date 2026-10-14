@@ -94,20 +94,61 @@ def test_default_roles_have_separate_tools_and_cannot_call_approval(tmp_path, mo
     monkeypatch.setenv('SYSTEM_WORKSPACE', str(tmp_path))
     monkeypatch.setenv('CODING_WORKSPACE', str(tmp_path / 'project'))
     agents = build_agents(config, object())
-    assert set(agents) == {'coordinator', 'coding', 'web', 'system'}
+    assert set(agents) == {'coordinator', 'coding', 'web'}
     assert config.workflow is None
-    assert {'read_project_file', 'write_project_file', 'run_python_tests'} <= {
+    assert {'read_project_file', 'write_project_file', 'run_python_tests', 'run_project_command',
+            'get_system_status', 'get_system_workspace', 'download_file', 'delete_file', 'restore_file'} <= {
         tool['function']['name'] for tool in agents['coding'].tools.schemas()}
     assert config.agents['coding'].approval_mode == 'automatic'
-    assert config.agents['system'].approval_mode == 'automatic'
     assert not agents['coordinator'].tools.schemas()
     assert agents['web'].builtin_tools == [{'type': 'web_search'}]
-    assert not agents['system'].builtin_tools
-    for role in ('coordinator', 'coding', 'web'):
+    assert not agents['coding'].builtin_tools
+    for role in ('coordinator', 'web'):
         result = asyncio.run(agents[role].tools.execute(ToolCall('delete_file', {'path': 'file'})))
         assert not result['ok']
-    result = asyncio.run(agents['system'].tools.execute(ToolCall('approve', {'request_id': 'any'})))
+    for role in ('coordinator', 'web'):
+        result = asyncio.run(agents[role].tools.execute(ToolCall('run_project_command', {'command': ['python', '--version']})))
+        assert not result['ok']
+    result = asyncio.run(agents['coding'].tools.execute(ToolCall('approve', {'request_id': 'any'})))
     assert not result['ok']
+
+
+def test_merged_coding_operates_both_workspaces_and_recovers_system_files(tmp_path, monkeypatch):
+    from companion.tools.approval import ExecutionContext, execution_context
+    config = CollaborationConfig.load(Path(__file__).resolve().parents[1] / 'config/agents.yaml')
+    system_root, coding_root = tmp_path / 'system', tmp_path / 'project'
+    monkeypatch.setenv('SYSTEM_WORKSPACE', str(system_root))
+    monkeypatch.setenv('CODING_WORKSPACE', str(coding_root))
+    agents = build_agents(config, object())
+    (system_root / 'file.txt').write_text('system copy')
+    (coding_root / 'file.txt').write_text('project copy')
+    async def check():
+        token = execution_context.set(ExecutionContext('human', 'coding', 'merged-job'))
+        try:
+            tools = agents['coding'].tools
+            system = await tools.execute(ToolCall('get_system_workspace', {}))
+            project = await tools.execute(ToolCall('get_coding_workspace', {}))
+            assert system['result']['workspace'] == str(system_root)
+            assert project['result']['workspace'] == str(coding_root)
+            assert system['result']['approval_mode'] == 'automatic'
+            deleted = await tools.execute(ToolCall('delete_file', {'path': 'file.txt'}))
+            assert deleted['ok'] and not (system_root / 'file.txt').exists()
+            assert (coding_root / 'file.txt').read_text() == 'project copy'
+            restored = await tools.execute(ToolCall('restore_file', {'restore_id': deleted['result']['restore_id']}))
+            assert restored['ok'] and (system_root / 'file.txt').read_text() == 'system copy'
+        finally:
+            execution_context.reset(token)
+    asyncio.run(check())
+    audit = [json.loads(line) for line in (system_root / '.agent-internal/audit.jsonl').read_text().splitlines()]
+    assert {event['role'] for event in audit} == {'coding'}
+    assert {event['approval_mode'] for event in audit} == {'automatic'}
+
+
+def test_system_alias_preserves_explicit_custom_roles():
+    config = flat_config()
+    assert config.resolve_agent('system') == 'coding'
+    config.agents['system'] = AgentSpec(model_role='system', token_env='SYSTEM_TOKEN', prompt='Custom system')
+    assert config.resolve_agent('system') == 'system'
 
 
 def test_empty_workspace_variables_use_dedicated_defaults(tmp_path, monkeypatch):
