@@ -56,7 +56,24 @@ class BotClient:
                     self._ready_at = time.monotonic() + delay
                     continue
                 if response.is_error or response.is_redirect:
-                    raise DiscordError(f"Discord request failed for {self.token_env} (HTTP {response.status_code})")
+                    # Report only the numeric API code, never response bodies,
+                    # request headers or credential values.
+                    code = None
+                    try:
+                        body = response.json()
+                        if isinstance(body, dict) and type(body.get("code")) is int:
+                            code = body["code"]
+                    except ValueError:
+                        pass
+                    detail = f", Discord code {code}" if code is not None else ""
+                    endpoint = path.split("?", 1)[0]
+                    hint = ""
+                    if endpoint.startswith("/channels/") and response.status_code in (403, 404):
+                        hint = "; check the configured channel ID, bot membership, and channel View Channel/Read Message History permissions"
+                    raise DiscordError(
+                        f"Discord request failed for {self.token_env}: {method} {endpoint} "
+                        f"(HTTP {response.status_code}{detail}){hint}"
+                    )
                 if response.headers.get("X-RateLimit-Remaining") == "0":
                     try:
                         delay = float(response.headers.get("X-RateLimit-Reset-After", "0"))

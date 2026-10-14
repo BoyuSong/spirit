@@ -88,6 +88,8 @@ python -m companion.discord_listener
 
 本地可把 `.env.example` 复制为项目根目录的 `.env`，填写上述变量。所有运行入口在读取配置和校验凭据前通过 `python-dotenv` 加载它，已有环境变量优先；文件缺失时正常使用环境设置。配置不从工作目录或上级目录自动搜索，启动后的文件修改需重启程序才会载入。`.env` 不提交到 Git，示例文件中没有真实凭据。
 
+启动失败时，报错会显示使用的凭据变量名、HTTP 方法、请求路径、状态码及 Discord 数字错误码，不输出 Token 或响应正文。若读取 `/channels/频道ID/messages` 返回 404（例如错误码 10003，Unknown Channel），重新从右键普通文字频道的「复制频道 ID」取得 `DISCORD_CHANNEL_ID`，并确认主管 Bot 已加入该服务器且能查看频道、读取历史。服务器 ID、应用 ID、用户 ID 或分类 ID 不能替代文字频道 ID。403 同样需要检查服务器/频道覆盖权限。修改 `.env` 后重启；若进程已设置同名变量，需同步修改，因为已有变量优先。私有线程需另行检查成员和线程访问权限，首轮联调建议使用普通文字频道。
+
 使用 Discord REST 轮询，不需要 Gateway WebSocket。网络允许 `api.deepseek.com`、`api.openai.com`、`discord.com`、`cdn.discordapp.com`。网页读取和文件下载的允许主机由 `agents.yaml` 的 `web_domains` 指定，同时需允许云环境访问相应域名。OpenAI 原生搜索由服务端访问网络，不受客户端网页读取域名表约束。单独直接调用 OpenAI Coding 时无需 DeepSeek Key；主管调度和完整监听器需要两家凭据。
 
 ## 下载和删除权限

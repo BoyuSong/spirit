@@ -370,3 +370,56 @@ def test_attachment_origin_and_size_are_bounded():
             await client.close()
 
     asyncio.run(check())
+
+
+def test_startup_channel_404_identifies_endpoint_and_hides_response_body(monkeypatch):
+    config = configuration()
+    service = DiscordService(config, monkeypatch)
+    requests = []
+    def endpoint(request):
+        requests.append(request)
+        if request.url.path == '/api/v10/channels/42/messages':
+            return httpx.Response(404, json={'code': 10003, 'message': 'sensitive response body'})
+        return service.handle(request)
+    bus = DiscordBus(config, transport=httpx.MockTransport(endpoint))
+    async def check():
+        try:
+            with pytest.raises(DiscordError) as error:
+                await bus.initialize()
+            message = str(error.value)
+            assert 'DISCORD_COORDINATOR_BOT_TOKEN' in message
+            assert 'GET /channels/42/messages' in message
+            assert 'HTTP 404, Discord code 10003' in message
+            assert 'configured channel ID' in message
+            assert 'sensitive response body' not in message
+            assert all(f'test-token-{role}' not in message for role in config.agents)
+            assert len(bus.bot_ids) == 4  # Identity and intent preflight succeeded.
+            assert all(request.method == 'GET' for request in requests)
+        finally:
+            await bus.close()
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize('path,response,expected_hint', [
+    ('/applications/@me', httpx.Response(404, json={'code': 10002, 'message': 'sensitive body'}), False),
+    ('/channels/42/messages', httpx.Response(403, json={'code': 50001, 'message': 'sensitive body'}), True),
+    ('/channels/42/messages?private=sensitive-query', httpx.Response(404, text='sensitive body'), True),
+])
+def test_error_diagnostics_are_endpoint_specific_and_do_not_echo_payloads(monkeypatch, path, response, expected_hint):
+    monkeypatch.setenv('TEST_BOT_TOKEN', 'private-test-token')
+    client = BotClient('TEST_BOT_TOKEN', transport=httpx.MockTransport(lambda _: response))
+    async def check():
+        try:
+            with pytest.raises(DiscordError) as error:
+                await client.request('GET', path)
+            message = str(error.value)
+            assert f'GET {path.split("?", 1)[0]}' in message
+            assert ('configured channel ID' in message) is expected_hint
+            assert 'private-test-token' not in message
+            assert 'sensitive body' not in message
+            assert 'sensitive-query' not in message
+            if response.headers.get('Content-Type', '').startswith('application/json'):
+                assert f'Discord code {response.json()["code"]}' in message
+        finally:
+            await client.close()
+    asyncio.run(check())
