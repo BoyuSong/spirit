@@ -153,7 +153,7 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
             assert "JSON schema" in body["messages"][0]["content"]
             assert "tools" not in body
             text = json.dumps(next(decisions))
-        elif model == registry.get("coding").model:
+        elif model == registry.get("coding").model and not any(tool.get('type') == 'web_search' for tool in body.get('tools', [])):
             coding_requests.append(body)
             names = {tool['name'] for tool in body['tools']}
             assert {'write_project_file', 'apply_text_edit', 'run_python_tests', 'run_project_command'} <= names
@@ -203,7 +203,7 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
             result = await WorkflowRunner(config, bus, build_agents(config, gateway)).run("Review system monitoring code")
             assert result.content == "Completed"
             assert "https://docs.python.org/3/" in result.results["1:web"]
-            assert len(set(model_requests)) == 3
+            assert len(set(model_requests)) == 2  # Independent coding/web roles share one OpenAI model.
             assert len(model_requests) == 7
             assert len(service.messages) == 10
             assert (tmp_path / 'coding' / 'addition.py').is_file()
