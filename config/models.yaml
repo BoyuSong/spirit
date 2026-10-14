@@ -1,10 +1,18 @@
 models:
   primary:
-    provider: ollama
-    model: qwen3:8b
-    host: http://127.0.0.1:11434
+    provider: openai
+    model: gpt-6-luna
+    api_key_env: CODING_API_KEY
   coding:
     provider: openai
     model: gpt-6.1-sol
     base_url: https://api.openai.com/v1
+    api_key_env: CODING_API_KEY
+  review:
+    provider: openai
+    model: gpt-6-sol
+    api_key_env: CODING_API_KEY
+  research:
+    provider: openai
+    model: gpt-6-astra
     api_key_env: CODING_API_KEY

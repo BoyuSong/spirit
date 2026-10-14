@@ -8,7 +8,7 @@ import httpx
 from companion.models.base import ModelProvider, ModelRequest, ModelResponse, ToolCall
 
 
-def responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def responses_input(messages: list[dict[str, Any]], *, model: str | None = None) -> list[dict[str, Any]]:
     """Translate canonical history, including older Ollama tool turns."""
     items = []
     pending: list[tuple[str, str]] = []
@@ -32,7 +32,10 @@ def responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             (call["function"]["name"], call.get("id") or f"call_history_{index}_{number}")
             for number, call in enumerate(calls)
         ]
-        if role == "assistant" and message.get("provider_items"):
+        if (
+            role == "assistant" and message.get("provider_items")
+            and (model is None or message.get("provider_model", model) == model)
+        ):
             # Preserve encrypted reasoning and function-call items from Responses API.
             items.extend(deepcopy(message["provider_items"]))
             continue
@@ -67,7 +70,7 @@ class OpenAIProvider(ModelProvider):
         if not api_key or not api_key.strip():
             raise ValueError(f"Set {self.api_key_env} in environment settings to use the coding model")
         payload = {
-            "model": self.model, "input": responses_input(request.messages),
+            "model": self.model, "input": responses_input(request.messages, model=self.model),
             "store": False, "include": ["reasoning.encrypted_content"],
         }
         if request.tools:
@@ -114,7 +117,7 @@ class OpenAIProvider(ModelProvider):
                 raise ValueError("Duplicate OpenAI function call IDs")
             return ModelResponse(
                 content="\n".join(content), model=data.get("model", self.model),
-                tool_calls=calls, provider_items=output,
+                tool_calls=calls, provider_items=output, provider_model=self.model,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("OpenAI returned an invalid or incomplete response") from exc

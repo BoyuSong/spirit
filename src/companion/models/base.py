@@ -30,6 +30,7 @@ class ModelResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)
     thinking: str | None = None
     provider_items: list[dict[str, Any]] = field(default_factory=list)
+    provider_model: str | None = None
 
     def as_message(self) -> dict[str, Any]:
         message: dict[str, Any] = {"role": "assistant", "content": self.content}
@@ -39,6 +40,8 @@ class ModelResponse:
             message["thinking"] = self.thinking
         if self.provider_items:
             message["provider_items"] = self.provider_items
+            if self.provider_model:
+                message["provider_model"] = self.provider_model
         return message
 
 

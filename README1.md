@@ -1,19 +1,21 @@
-# AI Companion — Agent Core
+# AI Companion — Cloud Multi-Agent
 
-当前实现独立于桌宠 UI：命令行会话、模型角色路由和有界工具调用循环。
+当前实现独立于桌宠 UI：云端模型角色路由、有界工具循环，以及四个独立 Discord Bot 的任务流水线。默认配置全部使用云端模型。
 
 Windows PowerShell:
 
 ```powershell
 py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-ollama pull qwen3:8b
+.\.venv\Scripts\python.exe -m pip install uv
+.\.venv\Scripts\python.exe -m uv pip install --python .\.venv\Scripts\python.exe -r pyproject.toml --extra dev
+$env:PYTHONPATH = "$PWD\src"
+$env:PYTHONDONTWRITEBYTECODE = "1"
 .\.venv\Scripts\python.exe -m companion
 ```
 
-Ollama is required for `/chat`. For `/coding`, configure the API Key as described below. `/chat` and `/coding` switch model roles. `/exit` exits.
+配置 API Key 后使用 `/chat`（协调）、`/coding`、`/review`、`/research` 切换云端模型。`/role NAME` 选择 `models.yaml` 中登记的其他模型配置键。`/exit` 退出。安装依赖时不使用 editable 模式，以保护已跟踪的 egg-info。
 
-可以输入“现在内存使用率是多少？”或“查看 CPU 和内存状态”。Agent 会把工具结果回填给模型，再显示最终回答。`/chat` 使用本地 Qwen3 8B；`/coding` 使用远程 OpenAI 模型，不需要本地 Ollama。
+可以输入“现在内存使用率是多少？”或“查看 CPU 和内存状态”。Agent 会把工具结果回填给模型，再显示最终回答。模型和 Bot 的初始分工见 [Discord 多模型设计](docs/cloud-multi-agent.md)。
 
 ## 远程 coding 模型
 
@@ -33,12 +35,24 @@ coding:
 
 远程请求使用 `store: false`，工具 schema 转换为 Responses API 的 function 定义；保留工具调用 ID 和加密 reasoning 输出，以支持多轮工具调用。默认使用模型自身的采样参数，不发送可能被 reasoning 模型拒绝的 `temperature`。
 
-聊天和编程角色共享已完成的会话历史；切换 `/coding` 后，这段历史及需要的工具结果会发送给 OpenAI。Ollama 的内部 thinking 字段不会直接发送给 OpenAI。云端 coding 验收不需要先安装本地模型；本地 `/chat` 仍需 Ollama 和 Qwen3 8B。
+命令行角色共享已完成的会话历史，调用时把可见历史及工具结果发送给对应云端模型。不同模型不会复用彼此的加密 reasoning；同一模型的工具回填保留其加密 reasoning。
+
+## Discord 多角色协作
+
+`config/agents.yaml` 登记角色、模型配置键、独立 Bot Token 变量名和流程。默认流程为“协调拆解 → 研究 → 编码 → 审查 → 协调汇总”。模型选择可在 `config/models.yaml` 修改。
+
+需要四个 Bot Token、`DISCORD_CHANNEL_ID` 和 API Key。在 Discord 配置频道权限及协调 Bot 的 Message Content Intent 后，主动运行：
+
+```powershell
+.\.venv\Scripts\python.exe -m companion.discord_workflow "设计一个带测试的配置加载器"
+```
+
+该命令会向所选频道发送任务和结果，调用云端模型。参数 `--help` 只显示帮助。配置步骤、预算、消息过滤和后续新增模型／Bot 的方式详见 [Discord 多模型设计](docs/cloud-multi-agent.md)。
 
 Run tests:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
 ```
 
 ## Agent 行为
@@ -66,8 +80,8 @@ export PYTHONDONTWRITEBYTECODE=1
 /workspace/.venvs/spirit/bin/python -m companion
 ```
 
-测试不依赖真实模型，覆盖工具执行、参数拒绝、超时、调用预算、失败时的会话历史、命令行、Ollama Python SDK 消息序列化／解析，以及 OpenAI Responses 请求、加密 reasoning 回填、工具调用 ID、鉴权错误和旧会话转换。集成测试使用模拟 HTTP 响应，不代表真实模型推理已通过。
+测试不依赖真实模型，覆盖工具循环、超时、预算、会话历史、跨模型 reasoning 转换、OpenAI Responses、四 Bot 的 Discord HTTP 交接、新角色配置、长附件、消息过滤、重复消息和限流。集成测试使用模拟 HTTP 响应，不代表真实模型推理或 Discord 联调已通过。
 
-本地聊天另需本机运行 `ollama serve` 并完成 `ollama pull qwen3:8b`。远程 coding 需要 API Key、模型访问权限和额度。请分别验收普通聊天／编码、CPU／内存查询、查询后的追问，以及服务不可用时的错误提示。Key 缺失时，`/coding` 请求会报告变量名称，仍可退出或切换回 `/chat`。
+真实运行需要 API Key、对应模型访问权限及额度。Discord 工作流另需独立 Bot Token、频道 ID 和权限。请验收云端普通聊天、角色切换、工具查询以及频道中的完整任务交接。Key 缺失时会报告变量名称，Discord 凭据缺失时不会发送任务。
 
-当前尚未包含流式输出、重试、多模型回退、持久化记忆、任务队列、GPU 管理或桌宠 UI。
+当前为有界串行工作流；尚未包含流式输出、模型自动重试／回退、持久化记忆／队列、并行 DAG、实际文件修改／代码执行、联网检索或桌宠 UI。

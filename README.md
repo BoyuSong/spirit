@@ -1,8 +1,10 @@
 # AI Companion
 
-当前仓库实现的是 **Agent Core**：Model Gateway、命令行聊天、只读系统状态工具和有界工具调用循环。安装、使用和测试见 [Agent 开发说明](README1.md)。
+当前仓库实现的是 **云端多模型 Agent Core**：协调、编码、审查、研究四个角色，每个角色使用独立 Discord Bot，通过结构化任务和结果协作。默认配置全部使用云端模型，不需要拉取或启动本地模型。
 
-以下为 Windows 桌宠阶段的设计说明；当前代码尚未包含这一阶段的入口、依赖或 UI。
+安装、使用和测试见 [Agent 开发说明](README1.md)，角色配置和新增 Bot 见 [Discord 多模型设计](docs/cloud-multi-agent.md)。
+
+以下保留早期 Windows 桌宠设计作为参考；其中本地模型及启动步骤不适用于当前云端 Agent，当前代码尚未包含该 UI 阶段。
 
 ## Live2D Companion MVP (Windows) 设计
 
