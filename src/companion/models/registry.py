@@ -1,6 +1,6 @@
 from pathlib import Path
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ModelConfig(BaseModel):
@@ -9,6 +9,15 @@ class ModelConfig(BaseModel):
     host: str = "http://127.0.0.1:11434"
     base_url: str = "https://api.openai.com/v1"
     api_key_env: str = "CODING_API_KEY"
+
+    @model_validator(mode="before")
+    @classmethod
+    def provider_defaults(cls, data):
+        if isinstance(data, dict) and data.get("provider") == "deepseek":
+            data = dict(data)
+            data.setdefault("base_url", "https://api.deepseek.com/v1")
+            data.setdefault("api_key_env", "DEEPSEEK_API_KEY")
+        return data
 
 
 class RegistryConfig(BaseModel):

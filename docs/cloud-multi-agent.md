@@ -19,14 +19,18 @@ flowchart LR
 
 | 功能 | 默认模型 | 工具 | Bot 凭据变量 |
 |---|---|---|---|
-| 主管 `coordinator` | `gpt-6-luna`，模型键 `primary` | 按需调度、汇总或直接回答 | `DISCORD_COORDINATOR_BOT_TOKEN` |
+| 主管 `coordinator` | DeepSeek `deepseek-chat`，模型键 `primary` | 按需调度、汇总或直接回答 | `DISCORD_COORDINATOR_BOT_TOKEN` |
 | 编码 `coding` | `gpt-6.1-sol` | 生成、解释和检查代码、提出测试建议 | `DISCORD_CODING_BOT_TOKEN` |
-| 网站 `web` | `gpt-6-astra` | OpenAI 联网搜索、读取公开 HTML/文本、提供来源链接 | `DISCORD_WEB_BOT_TOKEN` |
-| 系统 `system` | `gpt-6-sol` | CPU/内存状态、目录列表、文件读取、经批准下载和删除 | `DISCORD_SYSTEM_BOT_TOKEN` |
+| 网站 `web` | 暂用 OpenAI `gpt-6-astra`，未定案 | OpenAI 联网搜索、读取公开 HTML/文本、提供来源链接 | `DISCORD_WEB_BOT_TOKEN` |
+| 系统 `system` | 暂用 OpenAI `gpt-6-sol`，未定案 | CPU/内存状态、目录列表、文件读取、经批准下载和删除 | `DISCORD_SYSTEM_BOT_TOKEN` |
 
 功能 Bot 地位平等，不再固定执行“研究、编码、审查”流水线。主管可只调用一个功能，也可直接回答；编码 Bot 自行检查方案，首版没有单独审查角色。编码仍使用你选的 GPT6.1，目前生成代码，尚不执行代码或写入源文件。
 
-这些型号列于 OpenAI 官方 SDK，实际账户访问、额度及联网工具支持仍需真实验证。模型可在 `config/models.yaml` 更换，默认复用 `CODING_API_KEY`；API Key 和 Bot Token 均只从环境设置读取。
+主管使用 DeepSeek 的 OpenAI 兼容 Chat Completions 接口，先采用 `deepseek-chat` 通用对话模型；具体型号可在 `config/models.yaml` 更换。编码保持 OpenAI GPT6.1。系统和网站的服务与型号尚未选择，表中的 OpenAI 配置是临时占位。OpenAI 型号列于官方 SDK，所有型号的实际账户访问、额度及联网工具支持仍需真实验证。
+
+主管使用独立的 `DEEPSEEK_API_KEY`（发送到 `api.deepseek.com`）；OpenAI 角色使用 `CODING_API_KEY`（发送到 `api.openai.com`）。两家服务的 Key 不混用，Bot Token 均只从环境设置读取。DeepSeek 使用 JSON 输出模式，调度决定的字段、目标角色和预算由程序验证；不把返回 JSON 等同于合法调度授权。无效决定会停止任务。
+
+选型建议：主管先用非思考对话模式，复杂规划再试思考模型；系统功能优先试较轻的通用模型（例如 `gpt-6-luna`），授权规则由工具后端控制；网站优先选择支持原生 `web_search` 的模型。系统和网站暂不切换，待确认型号及工具支持后再改配置。DeepSeek 适配支持 function 工具，不能直接使用 OpenAI 原生 `web_search`；换成 DeepSeek 网站角色时应取消该原生工具并使用独立搜索工具。
 
 ## 调度入口
 
@@ -64,11 +68,11 @@ python -m companion.discord_listener
 1. 创建四个独立 Discord 应用及 Bot，加入同一专用服务器频道。不能复用 Bot 身份。
 2. 给 Bot 配置 View Channel、Read Message History、Send Messages、Attach Files。
 3. 为读取通道的 Bot 开启 **Message Content Intent**。监听器和主管调度使用主管读取；直接工作流使用目标 Bot 读取，因此推荐四个 Bot 都开启。启动会检查 `/applications/@me` flags；REST 读取同样受限制。
-4. 在环境设置填写 `CODING_API_KEY` 和上述四个 Bot Token。设置 `DISCORD_CHANNEL_ID`，以及监听器使用的 `DISCORD_OPERATOR_IDS`（你的 Discord 用户 ID；多个 ID 用英文逗号分隔）。ID 不是凭据，不能用显示名称代替。
+4. 在环境设置填写 `DEEPSEEK_API_KEY`、`CODING_API_KEY` 和上述四个 Bot Token。设置 `DISCORD_CHANNEL_ID`，以及监听器使用的 `DISCORD_OPERATOR_IDS`（你的 Discord 用户 ID；多个 ID 用英文逗号分隔）。ID 不是凭据，不能用显示名称代替。
 5. 设置 `SYSTEM_WORKSPACE` 为专用目录；未设置时使用当前目录下的 `.spirit-workspace`。云环境建议 `/workspace/spirit-runtime/system`。在云端运行时操作的是云端机器，访问你自己的电脑需在那台电脑运行程序。
 6. 云环境配置需由环境设置界面保存并发布，保存草稿本身不会注入值。旧 `DISCORD_REVIEW_BOT_TOKEN`、`DISCORD_RESEARCH_BOT_TOKEN` 已不被当前代码使用，可在设置界面移除旧要求。
 
-使用 Discord REST 轮询，不需要 Gateway WebSocket。网络允许 `api.openai.com`、`discord.com`、`cdn.discordapp.com`。网页读取和文件下载的允许主机由 `agents.yaml` 的 `web_domains` 指定，同时需允许云环境访问相应域名。OpenAI 原生搜索由服务端访问网络，不受客户端网页读取域名表约束。
+使用 Discord REST 轮询，不需要 Gateway WebSocket。网络允许 `api.deepseek.com`、`api.openai.com`、`discord.com`、`cdn.discordapp.com`。网页读取和文件下载的允许主机由 `agents.yaml` 的 `web_domains` 指定，同时需允许云环境访问相应域名。OpenAI 原生搜索由服务端访问网络，不受客户端网页读取域名表约束。单独直接调用 OpenAI Coding 时无需 DeepSeek Key；主管调度和完整监听器需要两家凭据。
 
 ## 下载和删除权限
 
@@ -103,6 +107,6 @@ Discord 批准必须明确回复，例如：
 
 任务状态只在内存中；启动跳过旧频道消息，重启不恢复中断任务。首版不支持网页登录、JavaScript 浏览器、任意 shell、代码执行、源文件写入、持久化任务恢复或独立 worker 部署。
 
-自动验证使用模拟 Discord/OpenAI HTTP 服务和临时目录，覆盖两种调度、真实 Gateway/Agent 代码路径、联网工具、批准等待、身份拒绝、一次性授权、文件操作、长附件及限流。真实推理、搜索和 Discord 投递需有效凭据与账户权限；离线通过不等于已完成真实联调。
+自动验证使用模拟 Discord/DeepSeek/OpenAI HTTP 服务和临时目录，覆盖跨服务主管调度、两种入口、真实 Gateway/Agent 代码路径、联网工具、批准等待、身份拒绝、一次性授权、文件操作、长附件及限流。真实推理、搜索和 Discord 投递需有效凭据与账户权限；离线通过不等于已完成真实联调。DeepSeek 官方 API 文档和 API 在本次开发时尚受环境网络规则限制，适配行为仅通过模拟 API 验证。
 
 参考：[Discord 消息 API](https://docs.discord.com/developers/resources/message)、[限流](https://docs.discord.com/developers/topics/rate-limits)、[Message Content Intent](https://docs.discord.com/developers/events/gateway#message-content-intent)、[OpenAI 模型 ID](https://github.com/openai/openai-python/blob/main/src/openai/types/shared/chat_model.py)。

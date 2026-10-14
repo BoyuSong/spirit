@@ -14,6 +14,7 @@ from companion.collaboration.workflow import WorkflowRunner
 from companion.core.agent import Agent
 from companion.models.gateway import ModelGateway
 from companion.models.providers.openai import OpenAIProvider
+from companion.models.providers.deepseek import DeepSeekProvider
 from companion.models.registry import ModelRegistry
 from companion.tools.system import default_tools
 from test_collaboration import RecordingAgent, configuration
@@ -116,6 +117,7 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
     registry = ModelRegistry(root / "config" / "models.yaml")
     gateway = ModelGateway(registry)
     monkeypatch.setenv("CODING_API_KEY", "test-model-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
     model_requests = []
     system_requests = []
     decisions = iter([
@@ -125,14 +127,21 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
     monkeypatch.setenv("SYSTEM_WORKSPACE", str(tmp_path))
 
     def models_endpoint(request):
-        assert request.headers["Authorization"] == "Bearer test-model-key"
         body = json.loads(request.content)
+        if request.url.host == "api.deepseek.com":
+            assert request.headers["Authorization"] == "Bearer test-deepseek-key"
+            assert request.url.path == "/v1/chat/completions"
+        else:
+            assert request.url.host == "api.openai.com"
+            assert request.headers["Authorization"] == "Bearer test-model-key"
+            assert request.url.path == "/v1/responses"
         model_requests.append(body["model"])
         model = body["model"]
         text = f"{model} result"
         annotations = []
         if model == registry.get("primary").model:
-            assert body["text"]["format"]["strict"] is True
+            assert body["response_format"] == {"type": "json_object"}
+            assert "JSON schema" in body["messages"][0]["content"]
             assert "tools" not in body
             text = json.dumps(next(decisions))
         elif model == registry.get("coding").model:
@@ -149,13 +158,16 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
             result = json.loads(body["input"][-1]["output"])
             assert result["ok"] is True
             assert result["result"]["memory"]["total_bytes"] > 0
+        if request.url.host == "api.deepseek.com":
+            return httpx.Response(200, json={"model": model, "choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]})
         output = [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text, "annotations": annotations}]}]
         return httpx.Response(200, json={"status": "completed", "model": model, "output": output})
 
     for model in registry.config.models.values():
-        assert model.provider == "openai"
+        assert model.provider in ("openai", "deepseek")
         key = (model.provider, model.model, model.base_url, model.api_key_env)
-        gateway.providers[key] = OpenAIProvider(
+        provider = OpenAIProvider if model.provider == "openai" else DeepSeekProvider
+        gateway.providers[key] = provider(
             model.model, model.base_url, model.api_key_env, transport=httpx.MockTransport(models_endpoint),
         )
 

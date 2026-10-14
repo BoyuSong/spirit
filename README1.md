@@ -1,6 +1,6 @@
 # AI Companion — Cloud Functional Agents
 
-默认使用云端模型：主管、Coding、网站、系统四个功能 Bot。你可以直接调度，也可以让主管按需分派；每个角色使用独立 Discord Bot。编码使用 OpenAI GPT6.1（`gpt-6.1-sol`），不需要安装或启动本地模型。
+默认使用云端模型：主管、Coding、网站、系统四个功能 Bot。主管先用 DeepSeek `deepseek-chat`，编码使用 OpenAI GPT6.1（`gpt-6.1-sol`）；系统和网站暂保留 OpenAI 占位配置，型号未定。你可以直接调度，也可以让主管按需分派；每个角色使用独立 Discord Bot，不需要安装或启动本地模型。
 
 ## 安装与命令行
 
@@ -15,7 +15,7 @@ $env:PYTHONDONTWRITEBYTECODE = "1"
 .\.venv\Scripts\python.exe -m companion
 ```
 
-在环境设置安全提供 `CODING_API_KEY`。交互入口使用 `/chat`、`/coding`、`/web`、`/system`、`/role NAME`、`/exit`；角色分别保存已完成的会话历史。也可直接运行单个功能：
+在环境设置安全提供主管的 `DEEPSEEK_API_KEY` 和 OpenAI 的 `CODING_API_KEY`。直接调用 Coding 只需 OpenAI Key。交互入口使用 `/chat`、`/coding`、`/web`、`/system`、`/role NAME`、`/exit`；角色分别保存已完成的会话历史。也可直接运行单个功能：
 
 ```powershell
 .\.venv\Scripts\python.exe -m companion --agent coding "写一个配置加载器"
@@ -26,7 +26,7 @@ $env:PYTHONDONTWRITEBYTECODE = "1"
 
 ## Discord 调度
 
-设置四个独立 Bot 的 Token、频道 `DISCORD_CHANNEL_ID`，按 [配置与权限说明](docs/cloud-multi-agent.md) 添加 Bot 并开启 Message Content Intent。
+主管工作流和完整监听器需两家模型的 API Key、四个独立 Bot 的 Token、频道 `DISCORD_CHANNEL_ID`，按 [配置与权限说明](docs/cloud-multi-agent.md) 添加 Bot 并开启 Message Content Intent。
 
 ```powershell
 # 主管按需分派
@@ -55,6 +55,6 @@ export PYTHONDONTWRITEBYTECODE=1
 /workspace/.venvs/spirit/bin/python -m pytest -q -p no:cacheprovider
 ```
 
-测试使用模拟 HTTP 和临时文件，验证调度、工具隔离、批准等待、文件操作及消息边界。真实模型访问、联网搜索和 Discord 联调仍需有效凭据、账户权限及频道权限；保存云环境草稿不会注入凭据或自动发布配置。
+测试使用模拟 DeepSeek/OpenAI/Discord HTTP 和临时文件，验证跨服务调度、工具隔离、批准等待、文件操作及消息边界。真实模型访问、联网搜索和 Discord 联调仍需有效凭据、账户权限及频道权限；保存云环境草稿不会注入凭据或自动发布配置。
 
 当前 job 保存在内存中，重启不恢复中断任务。文件操作完成后不会因后续模型失败自动回滚，需查看审计和文件状态。尚未包含持久化队列、独立 worker、任意 shell、源码写入/执行、浏览器自动化或桌宠 UI。

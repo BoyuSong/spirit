@@ -17,8 +17,10 @@ def check_models(config, registry, active_roles=None):
     missing = set()
     for role in roles:
         model = registry.get(config.agents[role].model_role)
-        if model.provider != "openai":
-            raise ValueError("Discord workers currently require cloud OpenAI models")
+        if model.provider not in ("openai", "deepseek"):
+            raise ValueError("Discord workers require a supported cloud provider (openai or deepseek)")
+        if config.agents[role].builtin_tools and model.provider != "openai":
+            raise ValueError(f"{role} requires a provider supporting its native tools; remove or replace builtin_tools when changing provider")
         if not os.environ.get(model.api_key_env):
             missing.add(model.api_key_env)
     if missing:
