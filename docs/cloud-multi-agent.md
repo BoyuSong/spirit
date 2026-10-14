@@ -86,6 +86,8 @@ python -m companion.discord_listener
 5. 设置 `SYSTEM_WORKSPACE` 为专用目录；未设置时使用当前目录下的 `.spirit-workspace`。云环境建议 `/workspace/spirit-runtime/system`。在云端运行时操作的是云端机器，访问你自己的电脑需在那台电脑运行程序。
 6. 云环境配置需由环境设置界面保存并发布，保存草稿本身不会注入值。旧 `DISCORD_REVIEW_BOT_TOKEN`、`DISCORD_RESEARCH_BOT_TOKEN` 已不被当前代码使用，可在设置界面移除旧要求。
 
+本地可把 `.env.example` 复制为项目根目录的 `.env`，填写上述变量。所有运行入口在读取配置和校验凭据前通过 `python-dotenv` 加载它，已有环境变量优先；文件缺失时正常使用环境设置。配置不从工作目录或上级目录自动搜索，启动后的文件修改需重启程序才会载入。`.env` 不提交到 Git，示例文件中没有真实凭据。
+
 使用 Discord REST 轮询，不需要 Gateway WebSocket。网络允许 `api.deepseek.com`、`api.openai.com`、`discord.com`、`cdn.discordapp.com`。网页读取和文件下载的允许主机由 `agents.yaml` 的 `web_domains` 指定，同时需允许云环境访问相应域名。OpenAI 原生搜索由服务端访问网络，不受客户端网页读取域名表约束。单独直接调用 OpenAI Coding 时无需 DeepSeek Key；主管调度和完整监听器需要两家凭据。
 
 ## 下载和删除权限

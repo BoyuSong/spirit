@@ -6,6 +6,7 @@ from uuid import uuid4
 from companion.collaboration.config import CollaborationConfig
 from companion.collaboration.factory import build_agents
 from companion.core.agent import Agent
+from companion.environment import load_environment
 from companion.models.gateway import ModelGateway
 from companion.models.registry import ModelRegistry
 from companion.tools.approval import ExecutionContext, execution_context
@@ -14,6 +15,7 @@ from companion.tools.registry import ToolRegistry
 
 async def main(initial_role="coordinator", goal=None):
     root = Path(__file__).resolve().parents[2]
+    load_environment(root)
     registry = ModelRegistry(root / "config" / "models.yaml")
     config = CollaborationConfig.load(root / "config" / "agents.yaml")
     gateway = ModelGateway(registry)
