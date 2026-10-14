@@ -8,6 +8,7 @@ from companion.collaboration.discord import DiscordBus
 from companion.collaboration.factory import build_agents, system_root
 from companion.collaboration.hub import DiscordHub
 from companion.discord_workflow import check_models
+from companion.environment import load_environment
 from companion.models.gateway import ModelGateway
 from companion.models.registry import ModelRegistry
 from companion.tools.approval import ApprovalManager
@@ -15,6 +16,7 @@ from companion.tools.approval import ApprovalManager
 
 async def run():
     root = Path(__file__).resolve().parents[2]
+    load_environment(root)
     config = CollaborationConfig.load(root / "config" / "agents.yaml")
     registry = ModelRegistry(root / "config" / "models.yaml")
     check_models(config, registry)

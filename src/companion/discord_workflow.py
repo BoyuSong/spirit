@@ -8,6 +8,7 @@ from companion.collaboration.config import CollaborationConfig
 from companion.collaboration.discord import DiscordBus
 from companion.collaboration.workflow import WorkflowRunner
 from companion.collaboration.factory import build_agents
+from companion.environment import load_environment
 from companion.models.gateway import ModelGateway
 from companion.models.registry import ModelRegistry
 
@@ -29,6 +30,7 @@ def check_models(config, registry, active_roles=None):
 
 async def run(goal: str, target: str | None = None):
     root = Path(__file__).resolve().parents[2]
+    load_environment(root)
     config = CollaborationConfig.load(root / "config" / "agents.yaml")
     registry = ModelRegistry(root / "config" / "models.yaml")
     if target is not None and target not in config.agents:

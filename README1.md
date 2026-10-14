@@ -15,7 +15,19 @@ $env:PYTHONDONTWRITEBYTECODE = "1"
 .\.venv\Scripts\python.exe -m companion
 ```
 
-在环境设置安全提供主管的 `DEEPSEEK_API_KEY` 和 OpenAI 的 `CODING_API_KEY`。直接调用 Coding 只需 OpenAI Key。交互入口使用 `/chat`、`/coding`、`/web`、`/system`、`/role NAME`、`/exit`；角色分别保存已完成的会话历史。也可直接运行单个功能：
+在环境设置安全提供主管的 `DEEPSEEK_API_KEY` 和 OpenAI 的 `CODING_API_KEY`。直接调用 Coding 只需 OpenAI Key。交互入口使用 `/chat`、`/coding`、`/web`、`/system`、`/role NAME`、`/exit`；角色分别保存已完成的会话历史。
+
+本地运行时，在项目根目录（与 `pyproject.toml` 同级）复制并编辑 `.env`：
+
+```powershell
+# 仅首次创建；已有 .env 时直接编辑，保留原值。
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+在文件中填写自己的 API Key、Bot Token 和频道/用户 ID，再启动程序。命令行、Discord 工作流和监听器都会自动加载项目根目录的 `.env`，不搜索其他目录。已设置的进程/云环境变量优先；文件中的值按字面量读取，不展开 `${变量}`。`.env` 已被 Git 忽略，`.env.example` 只包含空值和非秘密示例。云环境直接在环境设置填写凭据即可，不必创建 `.env`。
+
+也可直接运行单个功能：
+
 
 ```powershell
 .\.venv\Scripts\python.exe -m companion --agent coding "写一个配置加载器"
