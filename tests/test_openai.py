@@ -129,6 +129,18 @@ def test_old_ollama_history_converts_without_private_thinking():
     assert history == original
 
 
+def test_switching_models_drops_opaque_reasoning_but_keeps_visible_results():
+    history = [{
+        "role": "assistant", "content": "Previous model answer", "provider_model": "model-a",
+        "provider_items": [
+            {"type": "reasoning", "encrypted_content": "model-a-only"},
+            text_output("Previous model answer"),
+        ],
+    }]
+    assert responses_input(history, model="model-b") == [{"role": "assistant", "content": "Previous model answer"}]
+    assert responses_input(history, model="model-a") == history[0]["provider_items"]
+
+
 @pytest.mark.parametrize("messages", [
     [{"role": "tool", "tool_name": "status", "content": "orphan"}],
     [{"role": "assistant", "tool_calls": [{"function": {"name": "status", "arguments": {}}}]}],

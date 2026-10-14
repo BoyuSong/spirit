@@ -1,0 +1,332 @@
+import asyncio
+from email import policy
+from email.parser import BytesParser
+import json
+import time
+from uuid import uuid4
+
+import httpx
+import pytest
+
+from companion.collaboration.discord import BotClient, DiscordBus, DiscordError
+from companion.collaboration.protocol import Envelope, MAX_BYTES, PREFIX
+from companion.collaboration.workflow import WorkflowRunner
+from companion.core.agent import Agent
+from companion.models.gateway import ModelGateway
+from companion.models.providers.openai import OpenAIProvider
+from companion.models.registry import ModelRegistry
+from companion.tools.system import default_tools
+from test_collaboration import RecordingAgent, configuration
+
+
+class DiscordService:
+    def __init__(self, config, monkeypatch):
+        self.roles = {}
+        self.ids = {}
+        self.messages = []
+        self.attachments = {}
+        self.requests = []
+        self.application_flags = 1 << 18
+        for index, (role, spec) in enumerate(config.agents.items(), start=100):
+            token = f"test-token-{role}"
+            monkeypatch.setenv(spec.token_env, token)
+            self.roles[token] = role
+            self.ids[role] = str(index)
+        monkeypatch.setenv(config.channel_env, "42")
+
+    def add(self, author, content, attachments=None):
+        message = {"id": str(len(self.messages) + 1), "author": {"id": author, "bot": True},
+                   "content": content, "attachments": attachments or []}
+        self.messages.append(message)
+        return message
+
+    def handle(self, request):
+        self.requests.append(request)
+        if request.url.host == "cdn.discordapp.com":
+            assert "Authorization" not in request.headers
+            return httpx.Response(200, content=self.attachments[request.url.path])
+        token = request.headers["Authorization"].removeprefix("Bot ")
+        assert request.headers["User-Agent"].startswith("DiscordBot (")
+        role = self.roles[token]
+        if request.url.path.endswith("/users/@me"):
+            return httpx.Response(200, json={"id": self.ids[role], "bot": True})
+        if request.url.path.endswith("/applications/@me"):
+            return httpx.Response(200, json={"flags": self.application_flags})
+        assert request.url.path == "/api/v10/channels/42/messages"
+        if request.method == "GET":
+            after = int(request.url.params.get("after", "0"))
+            limit = int(request.url.params.get("limit", "100"))
+            messages = [message for message in self.messages if int(message["id"]) > after]
+            return httpx.Response(200, json=list(reversed(messages))[:limit])
+        attachments = []
+        if request.headers["Content-Type"].startswith("multipart/form-data"):
+            mime = BytesParser(policy=policy.default).parsebytes(
+                f"Content-Type: {request.headers['Content-Type']}\r\n\r\n".encode() + request.content,
+            )
+            parts = {part.get_param("name", header="Content-Disposition"): part for part in mime.iter_parts()}
+            payload = json.loads(parts["payload_json"].get_payload(decode=True))
+            data = parts["files[0]"].get_payload(decode=True)
+            path = f"/attachments/42/{len(self.messages) + 1}/agent-task.json"
+            self.attachments[path] = data
+            attachments = [{"filename": "agent-task.json", "size": len(data), "url": f"https://cdn.discordapp.com{path}"}]
+        else:
+            payload = json.loads(request.content)
+        assert payload["allowed_mentions"] == {"parse": []}
+        assert payload["enforce_nonce"] is True
+        assert len(payload["nonce"]) <= 25
+        return httpx.Response(200, json=self.add(self.ids[role], payload["content"], attachments))
+
+
+def envelope(**updates):
+    data = {"kind": "task", "job_id": uuid4(), "task_id": uuid4(), "sender": "coordinator",
+            "recipient": "coding", "step": 0, "expires_at": time.time() + 60, "content": "Task"}
+    data.update(updates)
+    return Envelope(**data)
+
+
+def test_four_distinct_bots_complete_a_workflow_through_mock_discord_http(monkeypatch):
+    config = configuration()
+    service = DiscordService(config, monkeypatch)
+    bus = DiscordBus(config, transport=httpx.MockTransport(service.handle))
+    agent = RecordingAgent()
+
+    async def check():
+        try:
+            await bus.initialize()
+            result = await WorkflowRunner(config, bus, agent).run("Design a parser")
+            assert result.content == "primary result"
+            assert len({message["author"]["id"] for message in service.messages}) == 4
+            assert len(service.messages) == 10
+            assert len(agent.requests) == 5
+        finally:
+            await bus.close()
+
+    asyncio.run(check())
+
+
+def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_paths(monkeypatch):
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    config = configuration()
+    service = DiscordService(config, monkeypatch)
+    bus = DiscordBus(config, transport=httpx.MockTransport(service.handle))
+    registry = ModelRegistry(root / "config" / "models.yaml")
+    gateway = ModelGateway(registry)
+    monkeypatch.setenv("CODING_API_KEY", "test-model-key")
+    model_requests = []
+    coding_requests = []
+
+    def models_endpoint(request):
+        assert request.headers["Authorization"] == "Bearer test-model-key"
+        body = json.loads(request.content)
+        model_requests.append(body["model"])
+        model = body["model"]
+        if model == registry.get("coding").model:
+            coding_requests.append(body)
+            if len(coding_requests) == 1:
+                output = [{"type": "function_call", "call_id": "call_status", "name": "get_system_status", "arguments": "{}"}]
+                return httpx.Response(200, json={"status": "completed", "model": model, "output": output})
+            result = json.loads(body["input"][-1]["output"])
+            assert result["ok"] is True
+            assert result["result"]["memory"]["total_bytes"] > 0
+        output = [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": f"{model} result"}]}]
+        return httpx.Response(200, json={"status": "completed", "model": model, "output": output})
+
+    for model in registry.config.models.values():
+        assert model.provider == "openai"
+        key = (model.provider, model.model, model.base_url, model.api_key_env)
+        gateway.providers[key] = OpenAIProvider(
+            model.model, model.base_url, model.api_key_env, transport=httpx.MockTransport(models_endpoint),
+        )
+
+    async def check():
+        try:
+            await bus.initialize()
+            result = await WorkflowRunner(config, bus, Agent(gateway, default_tools())).run("Review system monitoring code")
+            assert result.content == f"{registry.get('primary').model} result"
+            assert len(set(model_requests)) == 4
+            assert len(model_requests) == 6
+            assert len(service.messages) == 10
+        finally:
+            await bus.close()
+
+    asyncio.run(check())
+
+
+def test_long_unicode_task_round_trips_as_attachment_without_sending_token_to_cdn(monkeypatch):
+    config = configuration()
+    service = DiscordService(config, monkeypatch)
+    bus = DiscordBus(config, transport=httpx.MockTransport(service.handle))
+    task = envelope(content="🙂" * 1000)
+
+    async def check():
+        try:
+            await bus.initialize()
+            await bus.publish(task)
+            received = await bus.poll()
+            assert received == [task]
+            assert service.messages[0]["attachments"]
+            assert await bus.poll() == []
+        finally:
+            await bus.close()
+
+    asyncio.run(check())
+
+
+def test_chat_unknown_authors_sender_spoofing_and_expired_messages_do_not_execute(monkeypatch):
+    config = configuration()
+    service = DiscordService(config, monkeypatch)
+    bus = DiscordBus(config, transport=httpx.MockTransport(service.handle))
+
+    async def check():
+        try:
+            await bus.initialize()
+            valid = envelope()
+            content = PREFIX + valid.encode().decode()
+            service.add("999", content)
+            service.add(service.ids["coding"], content)
+            service.add(service.ids["coordinator"], "ordinary chat")
+            service.add(service.ids["coordinator"], PREFIX + "not-json")
+            expired = envelope(expires_at=time.time() - 1)
+            service.add(service.ids["coordinator"], PREFIX + expired.encode().decode())
+            await bus.publish(valid)
+            assert await bus.poll() == [valid]
+            assert await bus.poll() == []
+        finally:
+            await bus.close()
+
+    asyncio.run(check())
+
+
+def test_initialize_skips_history_and_rejects_reused_bot_accounts(monkeypatch):
+    config = configuration()
+    service = DiscordService(config, monkeypatch)
+    service.add(service.ids["coordinator"], PREFIX + envelope().encode().decode())
+    bus = DiscordBus(config, transport=httpx.MockTransport(service.handle))
+
+    async def check():
+        try:
+            await bus.initialize()
+            assert await bus.poll() == []
+            service.ids["coding"] = service.ids["coordinator"]
+            with pytest.raises(DiscordError, match="different Discord bot"):
+                await bus.initialize()
+        finally:
+            await bus.close()
+
+    asyncio.run(check())
+
+
+def test_missing_bindings_fail_before_network_access(monkeypatch):
+    config = configuration()
+    for spec in config.agents.values():
+        monkeypatch.delenv(spec.token_env, raising=False)
+    monkeypatch.delenv(config.channel_env, raising=False)
+    bus = DiscordBus(config, transport=httpx.MockTransport(lambda _: pytest.fail("Unexpected network request")))
+
+    async def check():
+        try:
+            with pytest.raises(DiscordError, match="DISCORD_CHANNEL_ID"):
+                await bus.initialize()
+        finally:
+            await bus.close()
+
+    asyncio.run(check())
+
+
+def test_missing_message_content_intent_blocks_before_posting(monkeypatch):
+    config = configuration()
+    service = DiscordService(config, monkeypatch)
+    service.application_flags = 0
+    bus = DiscordBus(config, transport=httpx.MockTransport(service.handle))
+
+    async def check():
+        try:
+            with pytest.raises(DiscordError, match="Message Content Intent"):
+                await bus.initialize()
+            assert not service.messages
+        finally:
+            await bus.close()
+
+    asyncio.run(check())
+
+
+def test_rate_limit_retries_follow_retry_after(monkeypatch):
+    monkeypatch.setenv("TEST_BOT_TOKEN", "test-token")
+    requests = []
+
+    def endpoint(request):
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(429, json={"retry_after": 0})
+        return httpx.Response(200, json={"ok": True})
+
+    client = BotClient("TEST_BOT_TOKEN", transport=httpx.MockTransport(endpoint))
+
+    async def check():
+        try:
+            assert await client.request("GET", "/users/@me") == {"ok": True}
+            assert len(requests) == 2
+        finally:
+            await client.close()
+
+    asyncio.run(check())
+
+
+def test_persistent_rate_limit_is_bounded(monkeypatch):
+    monkeypatch.setenv("TEST_BOT_TOKEN", "test-token")
+    requests = []
+
+    def endpoint(request):
+        requests.append(request)
+        return httpx.Response(429, json={"retry_after": 0})
+
+    client = BotClient("TEST_BOT_TOKEN", transport=httpx.MockTransport(endpoint))
+
+    async def check():
+        try:
+            with pytest.raises(DiscordError, match="retry later"):
+                await client.request("GET", "/users/@me")
+            assert len(requests) == 4
+        finally:
+            await client.close()
+
+    asyncio.run(check())
+
+
+def test_uncertain_post_failure_is_not_automatically_retried(monkeypatch):
+    monkeypatch.setenv("TEST_BOT_TOKEN", "test-token")
+    requests = []
+
+    def endpoint(request):
+        requests.append(request)
+        return httpx.Response(500, json={"error": "test-token must not be logged"})
+
+    client = BotClient("TEST_BOT_TOKEN", transport=httpx.MockTransport(endpoint))
+
+    async def check():
+        try:
+            with pytest.raises(DiscordError, match="HTTP 500") as error:
+                await client.request("POST", "/channels/42/messages", json={"content": "test"})
+            assert "test-token" not in str(error.value)
+            assert len(requests) == 1
+        finally:
+            await client.close()
+
+    asyncio.run(check())
+
+
+def test_attachment_origin_and_size_are_bounded():
+    client = BotClient("UNUSED_TOKEN", transport=httpx.MockTransport(lambda _: httpx.Response(200, content=b"x" * (MAX_BYTES + 1))))
+
+    async def check():
+        try:
+            with pytest.raises(DiscordError, match="Discord CDN"):
+                await client.download("https://example.com/task.json")
+            with pytest.raises(DiscordError, match="512 KiB"):
+                await client.download("https://cdn.discordapp.com/task.json")
+        finally:
+            await client.close()
+
+    asyncio.run(check())
