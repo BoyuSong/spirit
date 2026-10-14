@@ -5,7 +5,7 @@ from companion.collaboration.config import CollaborationConfig
 from companion.core.agent import Agent
 from companion.tools.approval import ApprovalManager
 from companion.tools.files import DownloadArguments, PathArguments, ReadArguments, RestoreArguments, SystemFiles
-from companion.tools.coding import CodingFiles, EditArguments, TestArguments, WriteArguments
+from companion.tools.coding import CodingFiles, CommandArguments, EditArguments, TestArguments, WriteArguments
 from companion.tools.registry import Tool, ToolArguments, ToolRegistry
 from companion.tools.system import get_system_status
 from companion.tools.web import PageArguments, WebReader
@@ -38,12 +38,13 @@ def build_agents(config, gateway, approvals=None):
         "delete_file": Tool("delete_file", "Move one file to recoverable app trash using the configured execution policy", PathArguments, files.delete_file, timeout=360),
         "restore_file": Tool("restore_file", "Restore a deleted file by restore_id without overwriting a destination", RestoreArguments, files.restore_file, timeout=360),
         "list_recoverable_files": Tool("list_recoverable_files", "List recoverable filenames and restore IDs without exposing file contents", ToolArguments, files.list_recoverable_files),
-        "get_coding_workspace": Tool("get_coding_workspace", "Get the project workspace, execution policy and pytest availability", ToolArguments, coding.workspace_info),
+        "get_coding_workspace": Tool("get_coding_workspace", "Get the project workspace, execution policy, pytest availability and project command support", ToolArguments, coding.workspace_info),
         "list_project_files": Tool("list_project_files", "List project files inside CODING_WORKSPACE", PathArguments, coding.list_directory),
         "read_project_file": Tool("read_project_file", "Read project text and SHA-256; use next_offset for continuation", ReadArguments, coding.read_project_file),
         "write_project_file": Tool("write_project_file", "Create or replace a project file; existing files require expected_sha256 from a read", WriteArguments, coding.write_project_file, timeout=360),
         "apply_text_edit": Tool("apply_text_edit", "Replace exactly one old_text match, guarded by expected_sha256", EditArguments, coding.apply_text_edit, timeout=360),
         "run_python_tests": Tool("run_python_tests", "Run pytest for a workspace path; executes project code with timeout and bounded output", TestArguments, coding.run_python_tests, timeout=370),
+        "run_project_command": Tool("run_project_command", "Run an executable with literal arguments in a project directory to compile, run files or test; bounded output and timeout, no shell string parsing", CommandArguments, coding.run_project_command, timeout=370),
     }
     agents = {}
     for role, spec in config.agents.items():

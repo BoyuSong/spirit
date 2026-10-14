@@ -1,4 +1,4 @@
-"""Workspace-scoped edits and bounded Python test execution."""
+"""Workspace-scoped edits and bounded project command execution."""
 import asyncio
 import difflib
 import hashlib
@@ -14,6 +14,7 @@ from pydantic import Field
 from companion.tools.approval import execution_context
 from companion.tools.files import PathArguments, SystemFiles
 from companion.tools.registry import ToolError
+from companion.tools.project_commands import resolve_command
 
 
 class WriteArguments(PathArguments):
@@ -31,6 +32,10 @@ class TestArguments(PathArguments):
     timeout_seconds: int = Field(default=30, ge=1, le=60)
 
 
+class CommandArguments(TestArguments):
+    command: list[str] = Field(min_length=1, max_length=64)
+
+
 def sha(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -43,7 +48,8 @@ class CodingFiles(SystemFiles):
     async def workspace_info(self, _):
         return {'workspace': str(self.root), 'paths': 'relative',
                 'approval_mode': self.approvals.policies.get(execution_context.get().role, 'manual'),
-                'test_runner': 'pytest', 'pytest_available': importlib.util.find_spec('pytest') is not None}
+                'test_runner': 'pytest', 'pytest_available': importlib.util.find_spec('pytest') is not None,
+                'project_commands': True, 'command_format': 'executable and literal arguments, not a shell string'}
 
     def contents(self, path):
         if not path.is_file():
@@ -138,32 +144,47 @@ class CodingFiles(SystemFiles):
 
     async def run_python_tests(self, args: TestArguments):
         async with self.mutation_lock:
-            return await self.run_tests_locked(args)
+            target = self.path(args.path)
+            if not target.is_dir() and not (target.is_file() and target.suffix == '.py'):
+                raise ToolError('invalid_test_target', 'Select a directory or a Python test file in the project workspace')
+            if importlib.util.find_spec('pytest') is None:
+                raise ToolError('pytest_missing', 'Install the project dev dependencies to enable pytest')
+            command = [sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', '--', str(target)]
+            return await self.execute_locked(args, command, self.root, 'run_python_tests')
 
-    async def run_tests_locked(self, args):
-        target = self.path(args.path)
-        if not target.is_dir() and not (target.is_file() and target.suffix == '.py'):
-            raise ToolError('invalid_test_target', 'Select a directory or a Python test file in the project workspace')
-        if importlib.util.find_spec('pytest') is None:
-            raise ToolError('pytest_missing', 'Install the project dev dependencies to enable pytest')
-        command = [sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', '--', str(target)]
-        request = await self.approvals.require('run_python_tests', {
-            'workspace': str(self.root), 'command': command, 'timeout_seconds': args.timeout_seconds,
+    async def run_project_command(self, args: CommandArguments):
+        async with self.mutation_lock:
+            cwd = self.path(args.path)
+            if not cwd.is_dir():
+                raise ToolError('invalid_command_directory', 'Select a working directory inside CODING_WORKSPACE')
+            if sum(len(part) for part in args.command) > 16000:
+                raise ToolError('command_too_large', 'Command arguments must fit within 16000 characters')
+            command = resolve_command(args.command, cwd, self.path, self.root)
+            return await self.execute_locked(args, command, cwd, 'run_project_command')
+
+    async def execute_locked(self, args, command, cwd, operation):
+        request = await self.approvals.require(operation, {
+            'workspace': str(self.root), 'cwd': str(cwd),
+            'command': command, 'timeout_seconds': args.timeout_seconds,
             'executes_project_code': True, 'output_limit_bytes': 65536,
         })
         # Do not forward API keys, Bot tokens, proxy bindings or the caller's
         # Python startup settings into generated test code.
         allowed = {'PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL',
-                   'COMSPEC', 'PATHEXT', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH'}
+                   'COMSPEC', 'PATHEXT', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+                   'JAVA_HOME', 'JDK_HOME', 'GOROOT', 'GOPATH', 'GOCACHE', 'GOMODCACHE',
+                   'CARGO_HOME', 'RUSTUP_HOME', 'DOTNET_ROOT', 'DOTNET_ROOT_X64',
+                   'DOTNET_CLI_HOME', 'NUGET_PACKAGES', 'NPM_CONFIG_PREFIX'}
         environment = {name: value for name, value in os.environ.items() if name.upper() in allowed}
         environment.update(PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8',
-                           PYTHONPATH=os.pathsep.join([str(self.root / 'src'), str(self.root)]))
+                           PYTHONPATH=os.pathsep.join([str(self.root / 'src'), str(self.root)]), CI='true')
         process = None
         output = bytearray()
         timed_out = truncated = False
         try:
             self.path(args.path)
-            process = await asyncio.create_subprocess_exec(*command, cwd=self.root, env=environment,
+            self.path(str(cwd.relative_to(self.root)))
+            process = await asyncio.create_subprocess_exec(*command, cwd=cwd, env=environment,
                 stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
                 start_new_session=os.name != 'nt')
             async def collect():
@@ -181,10 +202,13 @@ class CodingFiles(SystemFiles):
                 timed_out = True
             await self.stop(process)
             self.approvals.audit(request, 'completed')
-            return {'command': command, 'exit_code': process.returncode,
-                    'passed': process.returncode == 0 and not timed_out and not truncated,
-                    'timed_out': timed_out, 'output_truncated': truncated,
-                    'output': output.decode('utf-8', errors='replace')}
+            decoded = output.decode('utf-8', errors='replace')
+            result = {'command': command, 'cwd': str(cwd), 'exit_code': process.returncode,
+                      'success': process.returncode == 0 and not timed_out and not truncated,
+                      'timed_out': timed_out, 'output_truncated': truncated, 'output': decoded}
+            if operation == 'run_python_tests':
+                result['passed'] = result['success']
+            return result
         except BaseException:
             if process is not None:
                 await self.stop(process)

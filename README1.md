@@ -32,9 +32,13 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 .\.venv\Scripts\python.exe -m companion --agent system "查看 CPU 和内存状态"
 ```
 
-编码可读取项目、修改文件、按哈希校验做局部编辑，并运行真实 pytest；网站具备联网搜索、网页标题/链接和分页读取；系统具备状态、目录和文件读取，以及下载、回收删除和恢复。Coding 和系统按你的当前选择自动执行，无需逐次批准，操作仍有工作区范围和日志。
+编码可读取项目、修改各类代码文件、按哈希校验做局部编辑，并调用本机运行时或编译器运行、构建和测试；网站具备联网搜索、网页标题/链接和分页读取；系统具备状态、目录和文件读取，以及下载、回收删除和恢复。Coding 和系统按你的当前选择自动执行，无需逐次批准，操作仍有日志。
 
 在 `.env` 中配置 `CODING_WORKSPACE` 指向目标项目。默认 `.coding-workspace` 是独立演示目录；`SYSTEM_WORKSPACE` 默认 `.spirit-workspace`。例如 `CODING_WORKSPACE=D:/works/目标项目`。pytest 使用运行 Bot 的 Python 环境，目标项目依赖需要安装到该环境。文件工具约束工作区路径；执行测试仍以当前用户权限运行项目代码，不是操作系统沙箱。
+
+其他语言无需更换模型或新增语言 API。`run_project_command` 接受程序和参数数组，例如 `['node', 'example.js']`、`['npm', 'test']`、`['go', 'test', './...']`、`['javac', 'Main.java']`，工作目录必须位于 `CODING_WORKSPACE`。编译型语言可先编译、再运行产物；TypeScript 按项目已有脚本运行或测试。先在本机安装对应运行时、编译器和项目依赖，确保程序在 `PATH` 中，然后重启 Bot。Python 命令使用 Bot 自己的虚拟环境。
+
+项目命令默认 30 秒、最多 60 秒，返回实际退出码及最多 64 KiB 输出；长驻服务会超时。命令参数不进行 shell 字符串解析，不能用一条 `&&` 字符串拼接多步操作。Windows 的 npm/npx 使用 Node 执行其 JS 入口；其他 `.bat`/`.cmd` 包装器需改用原生程序或脚本解释器。命令成功不代表测试实际执行，Bot 必须结合输出说明验证结果。
 
 ## Discord 调度
 
@@ -75,4 +79,4 @@ export PYTHONDONTWRITEBYTECODE=1
 
 测试使用模拟 DeepSeek/OpenAI/Discord HTTP 和临时文件，验证跨服务调度、工具隔离、批准等待、文件操作及消息边界。真实模型访问、联网搜索和 Discord 联调仍需有效凭据、账户权限及频道权限；保存云环境草稿不会注入凭据或自动发布配置。
 
-当前 job 保存在内存中，重启不恢复中断任务。操作日志在系统工作区的 `.agent-internal/audit.jsonl`。文件操作完成后不会因后续模型失败自动回滚，需查看日志和文件状态。尚未包含持久化队列、独立 worker、任意 shell、浏览器自动化或桌宠 UI。
+当前 job 保存在内存中，重启不恢复中断任务。操作日志在系统工作区的 `.agent-internal/audit.jsonl`。文件操作完成后不会因后续模型失败自动回滚，需查看日志和文件状态。尚未包含持久化队列、独立 worker、交互终端、浏览器自动化或桌宠 UI。

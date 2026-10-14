@@ -11,7 +11,7 @@ flowchart LR
     C -->|按需经 Discord 分派| D
     C -->|按需经 Discord 分派| W
     C -->|按需经 Discord 分派| S
-    D --> P[代码工作区：文件修改和 pytest]
+    D --> P[代码工作区：文件修改、运行、构建和测试]
     S --> F[系统工作区：下载、回收和恢复]
     C -. 内部协议 .-> B[独立通信频道]
 ```
@@ -21,11 +21,11 @@ flowchart LR
 | 功能 | 默认模型 | 工具 | Bot 凭据变量 |
 |---|---|---|---|
 | 主管 `coordinator` | DeepSeek `deepseek-flash`，开启思考、力度 `high`，模型键 `primary` | 按需调度、汇总或直接回答 | `DISCORD_COORDINATOR_BOT_TOKEN` |
-| 编码 `coding` | `gpt-6.1-sol` | 项目读取、版本校验写入/编辑、真实 pytest | `DISCORD_CODING_BOT_TOKEN` |
+| 编码 `coding` | `gpt-6.1-sol` | 项目读取、版本校验写入/编辑、调用运行时与编译器验证 | `DISCORD_CODING_BOT_TOKEN` |
 | 网站 `web` | 暂用 OpenAI `gpt-6-astra`，未定案 | OpenAI 联网搜索、读取公开 HTML/文本、提供来源链接 | `DISCORD_WEB_BOT_TOKEN` |
 | 系统 `system` | 暂用 OpenAI `gpt-6-sol`，未定案 | CPU/内存状态、目录列表、分页读文件、下载、删除和恢复 | `DISCORD_SYSTEM_BOT_TOKEN` |
 
-功能 Bot 地位平等，不再固定执行“研究、编码、审查”流水线。主管可只调用一个功能，也可直接回答；编码 Bot 自行检查方案，首版没有单独审查角色。编码仍使用你选的 GPT6.1，现已具备项目文件操作和 Python 测试工具。
+功能 Bot 地位平等，不再固定执行“研究、编码、审查”流水线。主管可只调用一个功能，也可直接回答；编码 Bot 自行检查方案，首版没有单独审查角色。编码仍使用你选的 GPT6.1，具备项目文件操作和通用项目命令工具，不按编程语言注册单独接口。
 
 主管按你提供的示例，使用 OpenAI SDK 的异步 Chat Completions 接口访问 DeepSeek：
 
@@ -104,7 +104,9 @@ Coding 使用独立 `CODING_WORKSPACE`：
 - `apply_text_edit` 按 SHA-256 将唯一的 `old_text` 替换为 `new_text`。匹配多处、文件已变或变更预览过大都会拒绝，避免盲目覆盖。UTF-8 BOM 保留。
 - 修改以临时文件和原子发布完成，返回实际 diff 与新哈希。普通读取/编辑支持文本文件至多 1 MiB；单次替换参数最多 32000 字符。
 - `run_python_tests` 用当前 Bot 的 Python 环境运行 `pytest`，限定工作区目标、默认 30 秒、最多 60 秒、输出最多 64 KiB。返回真实退出码、输出、超时和截断状态；零测试、失败和超时均不算通过。目标项目依赖需先安装到该环境。
-- 测试子进程不继承 API Key 和 Bot Token 等调用方环境变量。同一 CodingFiles 实例的写入和测试串行执行，减少并发任务互相修改测试中的代码。测试会执行项目代码，仍有当前用户的文件/网络权限；该执行器不是操作系统沙箱。
+- `run_project_command` 在指定项目子目录执行程序与参数数组，可运行代码文件、调用编译器、执行项目测试。例：`command: [node, example.js]`、`[npm, test]`、`[go, test, ./...]`、`[javac, Main.java]`，编译与运行分两次调用。无需新增模型或语言 API；需要预先安装相应开发环境及依赖。Python 使用 Bot 当前虚拟环境，其他工具从 `PATH` 或显式程序路径寻找；项目内相对程序路径也支持。
+- 项目命令采用同样的 30 秒默认/60 秒上限及 64 KiB 输出上限，记录实际命令和工作目录。`success` 表示命令以零退出码完成且未超时/截断，不证明测试已执行；Bot 要检查测试输出。参数不进行 shell 字符串解析，不支持 `&&` 拼接或交互输入；Windows npm/npx 通过 Node 运行 JS 入口，其他批处理包装器需使用原生程序/解释器。
+- 子进程不继承 API Key 和 Bot Token 等调用方环境变量，但会保留明确列举的开发环境路径，如 `JAVA_HOME`、`GOPATH`、`CARGO_HOME`。同一 CodingFiles 实例的写入和命令串行执行，减少并发任务互相修改执行中的代码。文件工具和命令工作目录有路径约束；执行的程序、项目脚本及其子进程仍有当前用户的文件/网络权限，可以访问工作区外的资源，该执行器不是操作系统沙箱。
 
 系统工具使用 `SYSTEM_WORKSPACE`。状态、目录和文件读取支持真实数据和长文件分页；下载仅接受配置域名 HTTPS，先 HEAD 检查最终地址，最大 10 MiB，不覆盖目标，可验证 SHA-256。删除仅支持单文件，移入 `.agent-internal/trash/恢复ID` 并记录原路径。`restore_file` 可用 `restore_id` 恢复到原路径，不覆盖后来创建的文件。不支持递归删除目录或永久擦除。
 
@@ -122,6 +124,7 @@ Coding 使用独立 `CODING_WORKSPACE`：
 
 ```text
 @CodingBot 在工作区创建 addition.py 和对应测试，运行测试并报告结果
+@CodingBot 用 JavaScript 创建加法函数和 Node 内置测试，运行测试并报告实际结果
 @系统Bot 查看工作区，读取一个 UTF-8 文件
 @系统Bot 删除工作区中的测试文件，并返回恢复 ID
 @系统Bot 恢复刚才删除的文件
@@ -143,7 +146,7 @@ Windows 可运行 `scripts/run-discord.bat` 或 `scripts/run-cli.bat`。两个�
 
 协议包最多 512 KiB、任务和结果最多 32000 字符，上下文最多 64000 字符。所有内部任务/结果均以 JSON 附件发往通信频道，聊天正文不输出协议 JSON；长最终回答以文本附件发送到操作频道。两个频道分别维护读取游标，启动跳过两边旧消息。Bot 授权头不会发给 Discord CDN 或网站。429 限流等待有上限；未知发送失败不自动重试。内部 reasoning 不发到 Discord。
 
-任务状态只在内存中；启动跳过旧频道消息，重启不恢复中断任务。首版不支持网页登录、JavaScript 浏览器、任意 shell、持久化任务恢复或独立 worker 部署。
+任务状态只在内存中；启动跳过旧频道消息，重启不恢复中断任务。首版不支持网页登录、JavaScript 浏览器、交互终端、持久化任务恢复或独立 worker 部署。
 
 自动验证使用模拟 Discord/DeepSeek/OpenAI HTTP 服务和临时目录，覆盖跨服务主管调度、两种入口、真实 Gateway/Agent 代码路径、联网工具、自动/手动策略、文件版本冲突、真实 pytest 通过/失败/超时、批准等待、身份拒绝、文件恢复、频道隔离、附件及限流。真实推理、搜索和 Discord 投递需有效凭据与账户权限；离线通过不等于已完成真实联调。DeepSeek 官方 API 文档和 API 在本次开发时尚受环境网络规则限制，适配行为仅通过模拟 API 验证。
 

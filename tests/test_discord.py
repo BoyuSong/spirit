@@ -155,7 +155,7 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
         elif model == registry.get("coding").model:
             coding_requests.append(body)
             names = {tool['name'] for tool in body['tools']}
-            assert {'write_project_file', 'apply_text_edit', 'run_python_tests'} <= names
+            assert {'write_project_file', 'apply_text_edit', 'run_python_tests', 'run_project_command'} <= names
             assert 'delete_file' not in names
             if len(coding_requests) == 1:
                 output = [
@@ -167,10 +167,11 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
                 return httpx.Response(200, json={'status': 'completed', 'model': model, 'output': output})
             elif len(coding_requests) == 2:
                 assert json.loads(body['input'][-1]['output'])['result']['status'] == 'written'
-                output = [{'type': 'function_call', 'call_id': 'run_test', 'name': 'run_python_tests',
-                           'arguments': json.dumps({'path': 'tests'})}]
+                output = [{'type': 'function_call', 'call_id': 'run_test', 'name': 'run_project_command',
+                           'arguments': json.dumps({'command': ['python', '-m', 'pytest', '-q', '-p', 'no:cacheprovider', 'tests']})}]
                 return httpx.Response(200, json={'status': 'completed', 'model': model, 'output': output})
-            assert json.loads(body['input'][-1]['output'])['result']['passed'] is True
+            tested = json.loads(body['input'][-1]['output'])['result']
+            assert tested['success'] is True and '1 passed' in tested['output']
         elif model == registry.get("web").model:
             assert {tool["type"] for tool in body["tools"]} == {"web_search", "function"}
             annotations = [{"type": "url_citation", "url": "https://docs.python.org/3/"}]

@@ -96,7 +96,7 @@ def test_default_roles_have_separate_tools_and_cannot_call_approval(tmp_path, mo
     agents = build_agents(config, object())
     assert set(agents) == {'coordinator', 'coding', 'web', 'system'}
     assert config.workflow is None
-    assert {'read_project_file', 'write_project_file', 'run_python_tests'} <= {
+    assert {'read_project_file', 'write_project_file', 'run_python_tests', 'run_project_command'} <= {
         tool['function']['name'] for tool in agents['coding'].tools.schemas()}
     assert config.agents['coding'].approval_mode == 'automatic'
     assert config.agents['system'].approval_mode == 'automatic'
@@ -105,6 +105,9 @@ def test_default_roles_have_separate_tools_and_cannot_call_approval(tmp_path, mo
     assert not agents['system'].builtin_tools
     for role in ('coordinator', 'coding', 'web'):
         result = asyncio.run(agents[role].tools.execute(ToolCall('delete_file', {'path': 'file'})))
+        assert not result['ok']
+    for role in ('coordinator', 'system', 'web'):
+        result = asyncio.run(agents[role].tools.execute(ToolCall('run_project_command', {'command': ['python', '--version']})))
         assert not result['ok']
     result = asyncio.run(agents['system'].tools.execute(ToolCall('approve', {'request_id': 'any'})))
     assert not result['ok']
