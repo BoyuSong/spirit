@@ -101,12 +101,14 @@ def test_default_roles_have_separate_tools_and_cannot_call_approval(tmp_path, mo
         tool['function']['name'] for tool in agents['coding'].tools.schemas()}
     assert config.agents['coding'].approval_mode == 'automatic'
     assert not agents['coordinator'].tools.schemas()
-    assert agents['web'].builtin_tools == [{'type': 'web_search'}]
-    assert {'read_webpage', 'browse_webpage', 'extract_webpage'} <= {
+    assert not agents['web'].builtin_tools
+    assert {'search_web', 'read_webpage', 'browse_webpage', 'extract_webpage'} <= {
         tool['function']['name'] for tool in agents['web'].tools.schemas()}
     assert not agents['coding'].builtin_tools
     for role in ('coordinator', 'coding'):
         result = asyncio.run(agents[role].tools.execute(ToolCall('browse_webpage', {'url': 'https://example.org'})))
+        assert not result['ok']
+        result = asyncio.run(agents[role].tools.execute(ToolCall('search_web', {'query': 'test'})))
         assert not result['ok']
     for role in ('coordinator', 'web'):
         result = asyncio.run(agents[role].tools.execute(ToolCall('delete_file', {'path': 'file'})))

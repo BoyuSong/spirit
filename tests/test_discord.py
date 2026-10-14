@@ -112,6 +112,7 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
     from pathlib import Path
     from companion.collaboration.config import CollaborationConfig
     from companion.collaboration.factory import build_agents
+    from companion.tools.web import WebReader
 
     root = Path(__file__).resolve().parents[1]
     config = CollaborationConfig.load(root / "config" / "agents.yaml")
@@ -125,6 +126,11 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
     model_requests = []
     coding_requests = []
+    web_requests = []
+    def page_endpoint(request):
+        assert request.url.host == 'docs.python.org' and 'Authorization' not in request.headers
+        return httpx.Response(200, headers={'Content-Type': 'text/html'}, text='<title>Configuration docs</title><p>Real configuration example</p>')
+    monkeypatch.setattr('companion.collaboration.factory.WebReader', lambda domains: WebReader(domains, transport=httpx.MockTransport(page_endpoint)))
     decisions = iter([
         {"action": "delegate", "agent": role, "task": "Check", "answer": None}
         for role in ("web", "coding")
@@ -148,7 +154,7 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
         model = body["model"]
         text = f"{model} result"
         annotations = []
-        if model == registry.get("primary").model:
+        if model == registry.get("primary").model and 'response_format' in body:
             assert body["response_format"] == {"type": "json_object"}
             assert "JSON schema" in body["messages"][0]["content"]
             assert "tools" not in body
@@ -177,8 +183,28 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
             tested = json.loads(body['input'][-1]['output'])['result']
             assert tested['success'] is True and '1 passed' in tested['output']
         elif model == registry.get("web").model:
-            assert {tool["type"] for tool in body["tools"]} == {"web_search", "function"}
-            annotations = [{"type": "url_citation", "url": "https://docs.python.org/3/"}]
+            web_requests.append(body)
+            assert all(tool['type'] == 'function' for tool in body['tools'])
+            assert {'search_web', 'read_webpage', 'extract_webpage'} <= {tool['function']['name'] for tool in body['tools']}
+            if len(web_requests) < 3:
+                name = 'search_web' if len(web_requests) == 1 else 'read_webpage'
+                arguments = {'query': 'Python configuration docs'} if len(web_requests) == 1 else {'url': 'https://docs.python.org/3/'}
+                if len(web_requests) == 2:
+                    searched = json.loads(body['messages'][-1]['content'])['result']
+                    assert searched['search_performed'] and searched['sources'][0]['url'] == 'https://docs.python.org/3/'
+                return httpx.Response(200, json={'model': model, 'choices': [{'message': {'role': 'assistant', 'content': None,
+                    'tool_calls': [{'id': f'web-{name}', 'type': 'function', 'function': {'name': name, 'arguments': json.dumps(arguments)}}]}, 'finish_reason': 'tool_calls'}]})
+            read = json.loads(body['messages'][-1]['content'])['result']
+            assert read['title'] == 'Configuration docs' and 'Real configuration example' in read['text']
+            text = 'Configuration example from https://docs.python.org/3/'
+        else:  # Dedicated OpenAI search helper, not another Bot.
+            assert body['tools'] == [{'type': 'web_search'}]
+            assert body['tool_choice'] == {'type': 'web_search'}
+            assert 'web_search_call.action.sources' in body['include']
+            return httpx.Response(200, json={'status': 'completed', 'model': model, 'output': [
+                {'type': 'web_search_call', 'id': 'search-result', 'status': 'completed', 'action': {'type': 'search', 'sources': [{'url': 'https://docs.python.org/3/', 'title': 'Python docs'}]}},
+                {'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Python configuration documentation', 'annotations': [{'type': 'url_citation', 'url': 'https://docs.python.org/3/'}]}]},
+            ]})
         if request.url.host == "api.deepseek.com":
             return httpx.Response(200, json={"model": model, "choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]})
         output = [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text, "annotations": annotations}]}]
@@ -203,8 +229,8 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
             result = await WorkflowRunner(config, bus, build_agents(config, gateway)).run("Review system monitoring code")
             assert result.content == "Completed"
             assert "https://docs.python.org/3/" in result.results["1:web"]
-            assert len(set(model_requests)) == 2  # Independent coding/web roles share one OpenAI model.
-            assert len(model_requests) == 7
+            assert len(set(model_requests)) == 2  # Coordinator/web share Flash; coding/search share OpenAI.
+            assert len(model_requests) == 10
             assert len(service.messages) == 10
             assert (tmp_path / 'coding' / 'addition.py').is_file()
         finally:

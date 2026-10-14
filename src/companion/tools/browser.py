@@ -47,12 +47,24 @@ class WebBrowser:
         self.domains = domains
         self.playwright_factory = playwright_factory
 
+    def launch_options(self):
+        channel = os.environ.get('WEB_BROWSER_CHANNEL') or 'chromium'
+        if channel not in {'chromium', 'msedge', 'chrome'}:
+            raise ToolError('browser_channel_invalid', 'WEB_BROWSER_CHANNEL must be chromium, msedge or chrome; custom Chromium builds can use WEB_BROWSER_EXECUTABLE_PATH')
+        executable = os.environ.get('WEB_BROWSER_EXECUTABLE_PATH')
+        if executable:
+            return {'executable_path': executable}
+        if channel != 'chromium':
+            return {'channel': channel}
+        return {'executable_path': shutil.which('chromium') or shutil.which('google-chrome')}
+
     def capabilities(self):
         return {'playwright_installed': importlib.util.find_spec('playwright') is not None,
+                'browser_channel': os.environ.get('WEB_BROWSER_CHANNEL') or 'chromium',
                 'javascript': True, 'read_domains': self.domains,
                 'operations': ['rendered_text', 'links', 'element_hints', 'CSS_field_extraction'],
                 'sessions': 'Fresh browser context per call; no saved login/cookies',
-                'setup': 'Install the browser extra and run python -m playwright install chromium; a system chromium/google-chrome on PATH or WEB_BROWSER_EXECUTABLE_PATH can also be used'}
+                'setup': 'Install the browser extra and Chromium; installed Edge/Chrome can use WEB_BROWSER_CHANNEL=msedge/chrome, or set WEB_BROWSER_EXECUTABLE_PATH'}
 
     async def guard_request(self, route):
         try:
@@ -67,6 +79,7 @@ class WebBrowser:
     @asynccontextmanager
     async def page(self, url, wait_ms):
         public_url(url, self.domains)
+        launch_options = self.launch_options()
         if self.playwright_factory is None:
             try:
                 from playwright.async_api import async_playwright
@@ -77,8 +90,7 @@ class WebBrowser:
             factory = self.playwright_factory
         try:
             async with factory() as driver:
-                browser = await driver.chromium.launch(headless=True,
-                    executable_path=os.environ.get('WEB_BROWSER_EXECUTABLE_PATH') or shutil.which('chromium') or shutil.which('google-chrome'))
+                browser = await driver.chromium.launch(headless=True, **launch_options)
                 try:
                     context = await browser.new_context(accept_downloads=False, service_workers='block')
                     await context.route('**/*', self.guard_request)

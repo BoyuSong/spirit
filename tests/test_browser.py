@@ -67,6 +67,7 @@ def rendered_site(monkeypatch):
     if not executable:
         pytest.skip('A local Chromium executable is needed for these offline fixtures')
     monkeypatch.delenv('WEB_BROWSER_EXECUTABLE_PATH', raising=False)
+    monkeypatch.delenv('WEB_BROWSER_CHANNEL', raising=False)
     html = '''<title>Product details</title><h1 id="product">Example product</h1>
         <p id="price">Loading</p><p id="session"></p><a href="/next">Next page</a>
         <a href="https://other.org/source">Other source</a>
@@ -142,3 +143,15 @@ def test_real_browser_reports_invalid_and_unmatched_selectors(rendered_site):
     with pytest.raises(ToolError) as invalid:
         asyncio.run(rendered_site.extract(ExtractArguments(url='https://example.org/product', selectors={'field': '['}, wait_ms=0)))
     assert invalid.value.code == 'browser_failed'
+
+
+def test_edge_channel_and_explicit_browser_path_are_selected_without_profile_sharing(monkeypatch):
+    browser = WebBrowser(['example.org'])
+    monkeypatch.delenv('WEB_BROWSER_EXECUTABLE_PATH', raising=False)
+    monkeypatch.setenv('WEB_BROWSER_CHANNEL', 'msedge')
+    assert browser.launch_options() == {'channel': 'msedge'}
+    monkeypatch.setenv('WEB_BROWSER_EXECUTABLE_PATH', '/custom/browser')
+    assert browser.launch_options() == {'executable_path': '/custom/browser'}
+    monkeypatch.setenv('WEB_BROWSER_CHANNEL', 'unknown')
+    with pytest.raises(ToolError, match='WEB_BROWSER_CHANNEL'):
+        browser.launch_options()

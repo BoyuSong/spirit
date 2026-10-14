@@ -1,6 +1,6 @@
 # AI Companion — Cloud Functional Agents
 
-默认使用云端模型，启用主管、Coding、网站三个功能 Bot。系统功能已并入 Coding，第四个 Agent 用途待定，不配置模型或 Token。主管使用你选的 DeepSeek `deepseek-flash`，开启思考模式、推理力度 `high`；Coding 与网站均使用 OpenAI GPT6.1（`gpt-6.1-sol`）和 `CODING_API_KEY`，分别持有自己的工具与会话。你可以直接调度，也可以让主管按需分派；每个启用角色使用独立 Discord Bot，不需要安装或启动本地模型。
+默认使用云端模型，启用主管、Coding、网站三个功能 Bot。系统功能已并入 Coding，第四个 Agent 用途待定，不配置模型或 Token。主管与网站使用 DeepSeek `deepseek-flash`、`DEEPSEEK_API_KEY`，开启思考模式、推理力度 `high`；Coding 使用 OpenAI GPT6.1（`gpt-6.1-sol`）、`CODING_API_KEY`。各角色拥有独立工具与会话，用户可直接调度，也可让主管分派；不需要安装本地模型。
 
 ## 安装与命令行
 
@@ -42,9 +42,11 @@ Coding 可读取项目、修改各类代码文件、按哈希校验做局部编�
 
 ## 网站搜索与信息提取
 
-后续方案拟采用用户提到的 ego lite 和 ds v41；项目链接、服务地址及准确 API 型号尚待确认，因此目前保留 GPT6.1 配置和已验证的 Playwright 工具。若切换 DeepSeek，需把 OpenAI 原生搜索替换为独立搜索工具，不能仅修改模型名称。
+网站模型按用户最新选择使用已有 DeepSeek Flash。用户提到的 ego 浏览器尚未明确其具体产品，当前默认仍使用 Chromium；可选 Microsoft Edge/Chrome 通道，不自动切换。
 
-网站 Bot 使用 OpenAI 原生 `web_search` 找来源，`read_webpage` 读取普通网页；需要 JavaScript 时用 Playwright/Chromium 的 `browse_webpage`，再按用户目标用 `extract_webpage` 提取正文、标题、价格、作者、时间或链接等字段。字段未匹配会明确返回未找到，结果附实际来源 URL。网页内容仅作为资料，不作为执行指令。
+Flash 调用 `search_web` 找来源，`read_webpage` 读取普通网页；需要 JavaScript 时用 Playwright 的 `browse_webpage`，再按目标用 `extract_webpage` 提取正文、标题、价格、作者、时间或链接等字段。字段未匹配会明确返回未找到，结果附实际 URL。网页内容仅作为资料，不作为执行指令。
+
+独立搜索工具目前通过 OpenAI 原生 `web_search` 执行，用 `config/models.yaml` 的 `search` 模型和已有 `CODING_API_KEY`，无需新增搜索账号，但仍产生 OpenAI API 用量。`search` 是工具后端，不是第四个 Agent/Bot，也没有编码或系统工具。只发送搜索词，不转发其他角色历史或项目文件；强制调用搜索，确认返回实际完成的 search 记录后才返回摘要与来源。搜索失败时如实报告，不把模型凭空回答当搜索结果。网站的独立搜索和网页读取完整功能需要两家 Key。
 
 本机安装浏览器扩展（原生搜索和普通网页读取不需要 Chromium）：
 
@@ -53,7 +55,7 @@ Coding 可读取项目、修改各类代码文件、按哈希校验做局部编�
 .\.venv\Scripts\python.exe -m playwright install chromium
 ```
 
-默认优先使用 `WEB_BROWSER_EXECUTABLE_PATH`，然后查找 `PATH` 中的 Chromium/Chrome，否则使用 Playwright 下载的 Chromium。`.env` 中的路径变量可保持空白。修改安装或配置后重启 Bot，例如：`@网站Bot 搜索 Python 配置读取的官方文档，访问来源并提取代码示例和链接`。
+默认 `WEB_BROWSER_CHANNEL=chromium`：优先使用显式 `WEB_BROWSER_EXECUTABLE_PATH`，然后查找 `PATH` 中的 Chromium/Chrome，否则使用 Playwright 下载的 Chromium。路径变量可保持空白。如使用已安装的微软 Edge，设 `WEB_BROWSER_CHANNEL=msedge`；Google Chrome 用 `chrome`。显式程序路径优先于通道。通道选择已通过参数验证，Windows Edge 实际运行仍需本机验证。修改配置后重启，例如：`@网站Bot 搜索 Python 配置读取的官方文档，访问来源并提取代码示例和链接`。
 
 直接访问的页面及其脚本、API、重定向目标都必须在 `config/agents.yaml` 的 `web_domains` 内，新增目标网站时补上准确域名并重启；云端还需允许相应网络域名。原生搜索由 OpenAI 服务端访问网络，可搜索域名表外的来源。模型是否支持原生搜索及账号访问需真实 API 验证；浏览器工具本身不会替代搜索服务。
 

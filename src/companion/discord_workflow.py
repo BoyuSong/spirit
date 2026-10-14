@@ -16,6 +16,12 @@ from companion.models.registry import ModelRegistry
 def check_models(config, registry, active_roles=None):
     roles = active_roles or config.agents
     missing = set()
+    if any('search_web' in config.agents[role].tools for role in roles):
+        search_model = registry.get(config.search_model_role)
+        if search_model.provider != 'openai':
+            raise ValueError('search_web requires an OpenAI search backend; the website agent itself may use DeepSeek')
+        if not os.environ.get(search_model.api_key_env):
+            missing.add(search_model.api_key_env)
     for role in roles:
         model = registry.get(config.agents[role].model_role)
         if model.provider not in ("openai", "deepseek"):
