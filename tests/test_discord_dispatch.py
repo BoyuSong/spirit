@@ -99,6 +99,10 @@ def test_human_can_direct_dispatch_or_ask_manager_via_mentions(monkeypatch, tmp_
             expected = ['coding'] if role == 'coding' else ['primary', 'coding', 'primary']
             assert [call[0] for call in agent.calls] == expected
             assert any(message['content'].startswith('任务 ') for message in service.messages)
+            internal = [message for message in service.messages if message['attachments']]
+            assert internal and all(message['channel_id'] == '43' for message in internal)
+            assert all(not message['content'].startswith('ai-companion:') for message in service.messages)
+            assert all(not message['attachments'] for message in service.messages if message['channel_id'] == '42')
             assert not hub.mailboxes
         finally:
             await hub.close()
@@ -175,5 +179,42 @@ def test_concurrent_jobs_have_separate_owners_and_close_cancels_approvals(monkey
             assert not hub.mailboxes
         finally:
             await hub.close()
+            await bus.close()
+    asyncio.run(check())
+
+
+def test_internal_channel_only_accepts_protocol_and_chat_channel_only_accepts_operators(monkeypatch):
+    from test_discord import envelope
+    config, service, bus = setup(monkeypatch)
+    async def check():
+        try:
+            await bus.initialize(require_operators=True)
+            valid = envelope()
+            # Legacy inline protocol in the public chat is ignored when split.
+            service.add(service.ids['coordinator'], 'ai-companion:v1\n' + valid.encode().decode(), channel='42')
+            service.add('999', f'<@{service.ids["coding"]}> wrong place', channel='43')['author']['bot'] = False
+            human(service, 'coding', 'right place')
+            await bus.publish(valid)
+            events = await bus.poll_events()
+            assert events == [OperatorMessage('coding', 'right place', '999'), valid]
+            assert await bus.poll_events() == []
+            protocol_message = service.messages[-1]
+            assert protocol_message['channel_id'] == '43'
+            assert protocol_message['content'] == '正在处理任务…'
+            assert protocol_message['attachments']
+        finally:
+            await bus.close()
+    asyncio.run(check())
+
+
+def test_separate_channel_requirement_fails_before_network(monkeypatch):
+    config, service, bus = setup(monkeypatch)
+    monkeypatch.delenv('DISCORD_BUS_CHANNEL_ID')
+    async def check():
+        try:
+            with pytest.raises(DiscordError, match='DISCORD_BUS_CHANNEL_ID'):
+                await bus.initialize(require_operators=True)
+            assert not service.requests
+        finally:
             await bus.close()
     asyncio.run(check())

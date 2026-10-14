@@ -3,6 +3,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+class ModelAPIError(RuntimeError):
+    """A provider failure with a safe, operator-facing message."""
+
+
 @dataclass
 class ToolCall:
     name: str

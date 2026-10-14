@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from companion.models.base import ModelProvider, ModelRequest, ModelResponse, ToolCall
+from companion.models.base import ModelAPIError, ModelProvider, ModelRequest, ModelResponse, ToolCall
 
 
 def responses_input(messages: list[dict[str, Any]], *, model: str | None = None) -> list[dict[str, Any]]:
@@ -83,13 +83,16 @@ class OpenAIProvider(ModelProvider):
         if request.response_format:
             payload["text"] = {"format": request.response_format}
         # Use the model's sampling defaults; reasoning models may reject temperature.
-        async with httpx.AsyncClient(timeout=120, transport=self.transport) as client:
-            response = await client.post(
-                f"{self.base_url}/responses", json=payload,
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-        if response.is_error:
-            raise RuntimeError(f"OpenAI request failed (HTTP {response.status_code}); check API access and model availability")
+        try:
+            async with httpx.AsyncClient(timeout=120, transport=self.transport) as client:
+                response = await client.post(
+                    f"{self.base_url}/responses", json=payload,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+        except httpx.HTTPError:
+            raise ModelAPIError("OpenAI connection failed; check network access and service availability") from None
+        if response.is_error or response.is_redirect:
+            raise ModelAPIError(f"OpenAI request failed (HTTP {response.status_code}); check API access and model availability")
         try:
             data = response.json()
             if not isinstance(data, dict):

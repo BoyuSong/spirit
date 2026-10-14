@@ -5,7 +5,7 @@ import os
 import httpx
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 
-from companion.models.base import ModelProvider, ModelRequest, ModelResponse, ToolCall
+from companion.models.base import ModelAPIError, ModelProvider, ModelRequest, ModelResponse, ToolCall
 
 
 def chat_messages(messages, *, model):
@@ -118,8 +118,8 @@ class DeepSeekProvider(ModelProvider):
             return ModelResponse(content, data.get("model", self.model), calls,
                                  provider_items=native, provider_model=f"deepseek:{self.model}")
         except APIStatusError as exc:
-            raise RuntimeError(f"DeepSeek request failed (HTTP {exc.status_code}); check API access and model availability") from None
+            raise ModelAPIError(f"DeepSeek request failed (HTTP {exc.status_code}); check API access and model availability") from None
         except APIConnectionError:
-            raise RuntimeError("DeepSeek connection failed; check network access and service availability") from None
+            raise ModelAPIError("DeepSeek connection failed; check network access and service availability") from None
         except (AttributeError, KeyError, TypeError, ValueError) as exc:
             raise ValueError("DeepSeek returned an invalid or incomplete response") from exc

@@ -56,7 +56,24 @@ class BotClient:
                     self._ready_at = time.monotonic() + delay
                     continue
                 if response.is_error or response.is_redirect:
-                    raise DiscordError(f"Discord request failed for {self.token_env} (HTTP {response.status_code})")
+                    # Report only the numeric API code, never response bodies,
+                    # request headers or credential values.
+                    code = None
+                    try:
+                        body = response.json()
+                        if isinstance(body, dict) and type(body.get("code")) is int:
+                            code = body["code"]
+                    except ValueError:
+                        pass
+                    detail = f", Discord code {code}" if code is not None else ""
+                    endpoint = path.split("?", 1)[0]
+                    hint = ""
+                    if endpoint.startswith("/channels/") and response.status_code in (403, 404):
+                        hint = "; check the configured channel ID, bot membership, and channel View Channel/Read Message History permissions"
+                    raise DiscordError(
+                        f"Discord request failed for {self.token_env}: {method} {endpoint} "
+                        f"(HTTP {response.status_code}{detail}){hint}"
+                    )
                 if response.headers.get("X-RateLimit-Remaining") == "0":
                     try:
                         delay = float(response.headers.get("X-RateLimit-Reset-After", "0"))
@@ -98,7 +115,9 @@ class DiscordBus:
         }
         self.bot_ids: dict[str, str] = {}
         self.channel_id = ""
+        self.bus_channel_id = ""
         self.cursor = "0"
+        self.bus_cursor = "0"
         self.observer = observer or config.coordinator
         self.operator_ids = set()
 
@@ -118,6 +137,12 @@ class DiscordBus:
             names = missing + ([self.config.channel_env] if not channel.isdigit() or int(channel) <= 0 else [])
             raise DiscordError(f"Configure environment settings: {', '.join(names)}")
         self.channel_id = channel
+        bus_channel = os.environ.get(self.config.bus_channel_env, "") or channel
+        if not bus_channel.isdigit() or int(bus_channel) <= 0:
+            raise DiscordError(f"Configure a channel ID in {self.config.bus_channel_env}")
+        if self.config.require_separate_bus and bus_channel == channel:
+            raise DiscordError(f"Configure {self.config.bus_channel_env} as a different channel from {self.config.channel_env} for internal task messages")
+        self.bus_channel_id = bus_channel
         self.bot_ids = {}
         for role, client in self.clients.items():
             if role not in roles:
@@ -137,28 +162,28 @@ class DiscordBus:
         )
         if latest:
             self.cursor = str(max(int(message["id"]) for message in latest))
+        if self.bus_channel_id != self.channel_id:
+            latest_bus = await self.clients[self.observer].request(
+                "GET", f"/channels/{self.bus_channel_id}/messages", params={"limit": 1})
+            if latest_bus:
+                self.bus_cursor = str(max(int(message["id"]) for message in latest_bus))
 
     async def publish(self, envelope: Envelope):
         if envelope.sender not in self.bot_ids or envelope.recipient not in self.bot_ids:
             raise DiscordError("Message roles must be registered before sending")
         data = envelope.encode()
-        content = PREFIX + data.decode("utf-8")
         # Stable per-author nonce suppresses duplicate publication of the same event.
         nonce = hashlib.sha256(f"{envelope.job_id}:{envelope.task_id}:{envelope.kind}".encode()).hexdigest()[:24]
         payload = {"allowed_mentions": {"parse": []}, "nonce": nonce, "enforce_nonce": True}
         client = self.clients[envelope.sender]
-        path = f"/channels/{self.channel_id}/messages"
-        # Discord counts UTF-16 code units, so emoji consume two units.
-        if len(content.encode("utf-16-le")) // 2 <= 2000:
-            payload["content"] = content
-            await client.request("POST", path, json=payload)
-        else:
-            payload["content"] = PREFIX + f"{envelope.sender} → {envelope.recipient}: {envelope.kind} {envelope.task_id}"
-            payload["attachments"] = [{"id": 0, "filename": "agent-task.json"}]
-            await client.request(
-                "POST", path, data={"payload_json": json.dumps(payload)},
-                files={"files[0]": ("agent-task.json", data, "application/json")},
-            )
+        path = f"/channels/{self.bus_channel_id}/messages"
+        # Machine envelopes are attachments, never raw JSON in chat content.
+        payload["content"] = "正在处理任务…"
+        payload["attachments"] = [{"id": 0, "filename": "agent-task.json"}]
+        await client.request(
+            "POST", path, data={"payload_json": json.dumps(payload)},
+            files={"files[0]": ("agent-task.json", data, "application/json")},
+        )
 
     async def send_notice(self, role: str, content: str):
         payload = {"allowed_mentions": {"parse": []}, "nonce": uuid_nonce(), "enforce_nonce": True}
@@ -178,44 +203,52 @@ class DiscordBus:
         return [event for event in await self.poll_events() if isinstance(event, Envelope)]
 
     async def poll_events(self) -> list[Envelope | OperatorMessage]:
+        if self.bus_channel_id == self.channel_id:
+            return await self.read_events(self.channel_id, "cursor", operators=True, protocol=True)
+        operator_events = await self.read_events(self.channel_id, "cursor", operators=True, protocol=False)
+        bus_events = await self.read_events(self.bus_channel_id, "bus_cursor", operators=False, protocol=True)
+        return operator_events + bus_events
+
+    async def read_events(self, channel_id, cursor_attribute, *, operators, protocol):
         client = self.clients[self.observer]
+        cursor = getattr(self, cursor_attribute)
         messages = await client.request(
-            "GET", f"/channels/{self.channel_id}/messages", params={"after": self.cursor, "limit": 100},
+            "GET", f"/channels/{channel_id}/messages", params={"after": cursor, "limit": 100},
         )
         envelopes = []
         for message in sorted(messages, key=lambda item: int(item["id"])):
             message_id = str(message["id"])
-            if int(message_id) <= int(self.cursor):
+            if int(message_id) <= int(getattr(self, cursor_attribute)):
                 continue
             author = str(message.get("author", {}).get("id", ""))
             content = message.get("content", "")
-            if author in self.operator_ids and not message.get("author", {}).get("bot", False) and author not in self.bot_ids.values():
+            if operators and author in self.operator_ids and not message.get("author", {}).get("bot", False) and author not in self.bot_ids.values():
                 match = re.fullmatch(r"<@!?(\d+)>\s+([\s\S]{1,32000})", content.strip())
                 if match:
                     role = next((name for name, bot_id in self.bot_ids.items() if bot_id == match[1]), None)
                     if role and match[2].strip():
                         envelopes.append(OperatorMessage(role, match[2].strip(), author))
-                self.cursor = message_id
+                setattr(self, cursor_attribute, message_id)
                 continue
-            if author not in self.bot_ids.values():
-                self.cursor = message_id
-                continue
-            if not content.startswith(PREFIX):
-                self.cursor = message_id
+            if not protocol or author not in self.bot_ids.values():
+                setattr(self, cursor_attribute, message_id)
                 continue
             attachments = [item for item in message.get("attachments", []) if item.get("filename") == "agent-task.json"]
+            if not attachments and not content.startswith(PREFIX):
+                setattr(self, cursor_attribute, message_id)
+                continue
             try:
                 if attachments:
                     attachment = attachments[0]
                     if attachment.get("size", MAX_BYTES + 1) > MAX_BYTES:
-                        self.cursor = message_id
+                        setattr(self, cursor_attribute, message_id)
                         continue
                     data = await client.download(attachment["url"])
                 else:
                     data = content[len(PREFIX):].encode("utf-8")
                 envelope = Envelope.decode(data)
             except (ValueError, ValidationError):
-                self.cursor = message_id
+                setattr(self, cursor_attribute, message_id)
                 continue
             if (
                 self.bot_ids.get(envelope.sender) == author
@@ -223,7 +256,7 @@ class DiscordBus:
                 and envelope.expires_at > time.time()
             ):
                 envelopes.append(envelope)
-            self.cursor = message_id
+            setattr(self, cursor_attribute, message_id)
         return envelopes
 
     async def close(self):

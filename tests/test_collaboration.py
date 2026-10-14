@@ -167,3 +167,12 @@ def test_wire_protocol_rejects_unknown_fields_versions_and_large_messages():
             Envelope.decode(json.dumps(data).encode())
     with pytest.raises(ValueError, match="512 KiB"):
         Envelope.decode(b"x" * (MAX_BYTES + 1))
+
+
+def test_model_api_failure_is_actionable_but_unclassified_errors_hide_details():
+    from companion.models.base import ModelAPIError
+    from companion.collaboration.workflow import failure_message
+    public = failure_message('web', ModelAPIError('OpenAI request failed (HTTP 404); check model availability'))
+    assert 'web' in public and 'HTTP 404' in public
+    private = failure_message('coding', RuntimeError('private-api-key-value'))
+    assert 'RuntimeError' in private and 'private-api-key-value' not in private

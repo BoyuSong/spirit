@@ -11,8 +11,9 @@ flowchart LR
     C -->|按需经 Discord 分派| D
     C -->|按需经 Discord 分派| W
     C -->|按需经 Discord 分派| S
-    S -->|下载或删除请求| A[发起用户逐次批准]
-    A -->|批准当前操作| S
+    D --> P[代码工作区：文件修改和 pytest]
+    S --> F[系统工作区：下载、回收和恢复]
+    C -. 内部协议 .-> B[独立通信频道]
 ```
 
 ## 功能角色
@@ -20,11 +21,11 @@ flowchart LR
 | 功能 | 默认模型 | 工具 | Bot 凭据变量 |
 |---|---|---|---|
 | 主管 `coordinator` | DeepSeek `deepseek-flash`，开启思考、力度 `high`，模型键 `primary` | 按需调度、汇总或直接回答 | `DISCORD_COORDINATOR_BOT_TOKEN` |
-| 编码 `coding` | `gpt-6.1-sol` | 生成、解释和检查代码、提出测试建议 | `DISCORD_CODING_BOT_TOKEN` |
+| 编码 `coding` | `gpt-6.1-sol` | 项目读取、版本校验写入/编辑、真实 pytest | `DISCORD_CODING_BOT_TOKEN` |
 | 网站 `web` | 暂用 OpenAI `gpt-6-astra`，未定案 | OpenAI 联网搜索、读取公开 HTML/文本、提供来源链接 | `DISCORD_WEB_BOT_TOKEN` |
-| 系统 `system` | 暂用 OpenAI `gpt-6-sol`，未定案 | CPU/内存状态、目录列表、文件读取、经批准下载和删除 | `DISCORD_SYSTEM_BOT_TOKEN` |
+| 系统 `system` | 暂用 OpenAI `gpt-6-sol`，未定案 | CPU/内存状态、目录列表、分页读文件、下载、删除和恢复 | `DISCORD_SYSTEM_BOT_TOKEN` |
 
-功能 Bot 地位平等，不再固定执行“研究、编码、审查”流水线。主管可只调用一个功能，也可直接回答；编码 Bot 自行检查方案，首版没有单独审查角色。编码仍使用你选的 GPT6.1，目前生成代码，尚不执行代码或写入源文件。
+功能 Bot 地位平等，不再固定执行“研究、编码、审查”流水线。主管可只调用一个功能，也可直接回答；编码 Bot 自行检查方案，首版没有单独审查角色。编码仍使用你选的 GPT6.1，现已具备项目文件操作和 Python 测试工具。
 
 主管按你提供的示例，使用 OpenAI SDK 的异步 Chat Completions 接口访问 DeepSeek：
 
@@ -40,7 +41,7 @@ primary:
 
 `thinking: enabled` 对应 SDK 的 `extra_body={"thinking":{"type":"enabled"}}`，`reasoning_effort: high` 原样发送。SDK 是客户端，主管请求的服务仍是 DeepSeek；不会发送到 OpenAI。关闭思考可设为 `disabled` 并移除推理力度字段。客户端缓存区分思考模式和力度，SDK 自动重试关闭，避免未知失败时重复推理。
 
-编码保持 OpenAI GPT6.1。系统和网站的服务与型号尚未选择，表中的 OpenAI 配置是临时占位。OpenAI 型号列于官方 SDK，所有型号的实际账户访问、额度及联网工具支持仍需真实验证。
+编码保持 OpenAI GPT6.1。系统和网站的服务与型号尚未选择，表中的 OpenAI 配置是临时占位。OpenAI 型号列于官方 SDK，用户已报告主管在本地 Discord 运行成功，其他型号的实际账户访问、额度及联网工具支持仍需真实验证。
 
 主管使用独立的 `DEEPSEEK_API_KEY`（发送到 `api.deepseek.com`）；OpenAI 角色使用 `CODING_API_KEY`（发送到 `api.openai.com`）。两家服务的 Key 不混用，Bot Token 均只从环境设置读取。DeepSeek 使用 JSON 输出模式，调度决定的字段、目标角色和预算由程序验证；不把返回 JSON 等同于合法调度授权。无效决定会停止任务。
 
@@ -75,41 +76,62 @@ python -m companion.discord_listener
 
 启动后，在配置频道发送 `@coding 任务`、`@web 任务`、`@system 任务` 可直接调度；发送 `@主管 任务` 由主管按需分派。`coding` 等指该角色实际 Bot 的 Discord 提及，不是普通文字标签。只有 `DISCORD_OPERATOR_IDS` 中登记的人类账号可发起任务。
 
-这些 Discord 命令会主动向频道发布任务与结果。不会开机自动运行；`--help` 不发送消息。所有任务与文件结果都可能出现在该频道，请使用专用频道。
+这些 Discord 命令会主动向频道发布任务与结果。不会开机自动运行；`--help` 不发送消息。操作频道显示最终回答和运行错误；内部任务交接进入独立通信频道，文件内容及结果仍可能随任务被传给模型与频道。
 
 ## Discord 和环境配置
 
-1. 创建四个独立 Discord 应用及 Bot，加入同一专用服务器频道。不能复用 Bot 身份。
-2. 给 Bot 配置 View Channel、Read Message History、Send Messages、Attach Files。
+1. 创建四个独立 Discord 应用及 Bot，邀请到同一服务器。创建操作频道和独立通信频道两个普通文字频道。不能复用 Bot 身份。
+2. 四个 Bot 在两个频道都需要 View Channel、Read Message History、Send Messages、Attach Files。通信频道可以只允许你和四个 Bot 查看。
 3. 为读取通道的 Bot 开启 **Message Content Intent**。监听器和主管调度使用主管读取；直接工作流使用目标 Bot 读取，因此推荐四个 Bot 都开启。启动会检查 `/applications/@me` flags；REST 读取同样受限制。
-4. 在环境设置填写 `DEEPSEEK_API_KEY`、`CODING_API_KEY` 和上述四个 Bot Token。设置 `DISCORD_CHANNEL_ID`，以及监听器使用的 `DISCORD_OPERATOR_IDS`（你的 Discord 用户 ID；多个 ID 用英文逗号分隔）。ID 不是凭据，不能用显示名称代替。
-5. 设置 `SYSTEM_WORKSPACE` 为专用目录；未设置时使用当前目录下的 `.spirit-workspace`。云环境建议 `/workspace/spirit-runtime/system`。在云端运行时操作的是云端机器，访问你自己的电脑需在那台电脑运行程序。
+4. 在环境设置填写 `DEEPSEEK_API_KEY`、`CODING_API_KEY` 和上述四个 Bot Token。设置操作频道 `DISCORD_CHANNEL_ID`、不同的通信频道 `DISCORD_BUS_CHANNEL_ID`，以及监听器使用的 `DISCORD_OPERATOR_IDS`（你的 Discord 用户 ID；多个 ID 用英文逗号分隔）。ID 不是凭据，不能用显示名称代替。
+5. 设置 `SYSTEM_WORKSPACE` 和 `CODING_WORKSPACE` 为目标目录；默认分别为 `.spirit-workspace`、`.coding-workspace`。Coding 可指向你要修改的项目，例如 `D:/works/目标项目`；云环境建议 `/workspace/spirit-runtime/system`、`/workspace/spirit-runtime/coding`。在云端运行时操作的是云端机器，访问你自己的电脑需在那台电脑运行程序。
 6. 云环境配置需由环境设置界面保存并发布，保存草稿本身不会注入值。旧 `DISCORD_REVIEW_BOT_TOKEN`、`DISCORD_RESEARCH_BOT_TOKEN` 已不被当前代码使用，可在设置界面移除旧要求。
 
 本地可把 `.env.example` 复制为项目根目录的 `.env`，填写上述变量。所有运行入口在读取配置和校验凭据前通过 `python-dotenv` 加载它，已有环境变量优先；文件缺失时正常使用环境设置。配置不从工作目录或上级目录自动搜索，启动后的文件修改需重启程序才会载入。`.env` 不提交到 Git，示例文件中没有真实凭据。
 
+启动失败时，报错会显示使用的凭据变量名、HTTP 方法、请求路径、状态码及 Discord 数字错误码，不输出 Token 或响应正文。若读取 `/channels/频道ID/messages` 返回 404（例如错误码 10003，Unknown Channel），重新从右键普通文字频道的「复制频道 ID」取得 `DISCORD_CHANNEL_ID`，并确认主管 Bot 已加入该服务器且能查看频道、读取历史。服务器 ID、应用 ID、用户 ID 或分类 ID 不能替代文字频道 ID。403 同样需要检查服务器/频道覆盖权限。修改 `.env` 后重启；若进程已设置同名变量，需同步修改，因为已有变量优先。私有线程需另行检查成员和线程访问权限，首轮联调建议使用普通文字频道。
+
 使用 Discord REST 轮询，不需要 Gateway WebSocket。网络允许 `api.deepseek.com`、`api.openai.com`、`discord.com`、`cdn.discordapp.com`。网页读取和文件下载的允许主机由 `agents.yaml` 的 `web_domains` 指定，同时需允许云环境访问相应域名。OpenAI 原生搜索由服务端访问网络，不受客户端网页读取域名表约束。单独直接调用 OpenAI Coding 时无需 DeepSeek Key；主管调度和完整监听器需要两家凭据。
 
-## 下载和删除权限
+## 功能工具与执行策略
 
-状态查询、列目录、读取文件不弹出批准。下载和删除每次都由工具后端请求授权，展示请求 ID、发起人、任务、具体 URL 或路径、大小/上限和可选校验值。主管、模型、其他 Bot 和其他操作员都不能代替发起用户批准。
+按用户最新指示，Coding 和系统 Bot 的 `approval_mode` 默认是 `automatic`：直接执行相应工作区操作，不弹出批准。所有变更仍记录请求、执行策略、完成/失败；模型不能修改后端策略。要切回逐次批准，把对应角色在 `config/agents.yaml` 中的 `approval_mode` 改为 `manual` 并重启。其他新角色默认 `manual`。
 
-Discord 批准必须明确回复，例如：
+Coding 使用独立 `CODING_WORKSPACE`：
+
+- `get_coding_workspace`、`list_project_files`、`read_project_file` 提供工作区、文件内容、字节分页及 SHA-256。
+- `write_project_file` 创建文件或替换已有文本；替换必须提供从读取返回的 `expected_sha256`。
+- `apply_text_edit` 按 SHA-256 将唯一的 `old_text` 替换为 `new_text`。匹配多处、文件已变或变更预览过大都会拒绝，避免盲目覆盖。UTF-8 BOM 保留。
+- 修改以临时文件和原子发布完成，返回实际 diff 与新哈希。普通读取/编辑支持文本文件至多 1 MiB；单次替换参数最多 32000 字符。
+- `run_python_tests` 用当前 Bot 的 Python 环境运行 `pytest`，限定工作区目标、默认 30 秒、最多 60 秒、输出最多 64 KiB。返回真实退出码、输出、超时和截断状态；零测试、失败和超时均不算通过。目标项目依赖需先安装到该环境。
+- 测试子进程不继承 API Key 和 Bot Token 等调用方环境变量。同一 CodingFiles 实例的写入和测试串行执行，减少并发任务互相修改测试中的代码。测试会执行项目代码，仍有当前用户的文件/网络权限；该执行器不是操作系统沙箱。
+
+系统工具使用 `SYSTEM_WORKSPACE`。状态、目录和文件读取支持真实数据和长文件分页；下载仅接受配置域名 HTTPS，先 HEAD 检查最终地址，最大 10 MiB，不覆盖目标，可验证 SHA-256。删除仅支持单文件，移入 `.agent-internal/trash/恢复ID` 并记录原路径。`restore_file` 可用 `restore_id` 恢复到原路径，不覆盖后来创建的文件。不支持递归删除目录或永久擦除。
+
+文件工具拒绝绝对路径、越界、符号链接/Windows junction、凭据与控制目录、大小写形式的 `.env`/`.git`、Windows 设备名及 NTFS 替代数据流路径。这是应用层路径约束，不能隔离同机其他进程。
+
+网站 Bot 使用原生 `web_search` 检索和 `read_webpage` 读取公开 HTML/文本。`get_web_capabilities` 可查看允许域名和格式；网页返回实际 URL、标题、正文片段、来源链接和 `next_offset`，可分页继续读取。链接会标明能否由当前域名表直接读取；不支持的域名、登录或 JavaScript 页面应报告限制。
+
+手动模式时，后端显示路径/URL、哈希/diff 或测试命令。Discord 只接受发起任务的人类用户回复 `@对应Bot approve 请求ID` 或 `deny 请求ID`，其他用户、Bot、失效或重复请求不能批准；请求以易读说明显示，不输出原始 JSON。终端输入 `y` 确认，非交互终端拒绝。请求默认 300 秒有效，停止任务会取消等待。自动模式没有待批准请求。
+
+操作日志统一记录在系统工作区的 `.agent-internal/audit.jsonl`。已完成的文件操作不会因后续模型失败自动回滚；失败任务也应查看日志和文件状态。
+
+## 验收建议
+
+设置两个频道、工作区并重启后，在操作频道逐项测试：
 
 ```text
-@system approve 具体请求ID
-@system deny 具体请求ID
+@CodingBot 在工作区创建 addition.py 和对应测试，运行测试并报告结果
+@系统Bot 查看工作区，读取一个 UTF-8 文件
+@系统Bot 删除工作区中的测试文件，并返回恢复 ID
+@系统Bot 恢复刚才删除的文件
+@网站Bot 搜索 Python 官方文档并读取来源，给出标题和链接
+@主管 查找 Python 文档，然后让 Coding 写一个示例并测试
 ```
 
-批准消息由监听器直接处理，不交给模型判断。授权仅用于这一个请求；过期、已使用、其他用户的批准不会执行操作。等待批准时监听器仍继续接收 Discord 消息；超时或停止任务会取消待批请求。同一任务对相同操作的拒绝不会反复弹出。命令行发起的操作在终端显示详情并输入 `y`，不在 Discord 批准；非交互终端默认拒绝。批准窗口默认 300 秒，授权工具总预算 360 秒，整个任务默认 600 秒。
+使用实际 Bot 提及。确认文件确实创建/修改，pytest 有真实退出码，删除后可恢复；操作频道应不出现任务协议 JSON 或其附件，交接附件只存在于通信频道。内部频道不接收用户调度。
 
-文件操作仅在 `SYSTEM_WORKSPACE` 内使用相对路径，拒绝越界、绝对路径、符号链接、环境凭据文件和内部控制目录。默认限制是应用层路径检查，不能隔离同机其他进程，建议使用专用目录并避免其他程序同时修改它。
-
-下载仅接受配置域名的 HTTPS：批准前仅发 HEAD 请求查询元信息；对每次重定向检查域名，并展示最终 URL。批准后才 GET 内容，最大 10 MiB，写入新文件，不覆盖已有目标；可验证用户给定的 SHA-256。批准后 URL 发生重定向会停止操作，不自动换下载目标。
-
-删除仅支持单个文件，移到 `.agent-internal/trash/恢复ID`，不递归删除目录或永久擦除。批准前后校验文件是否改变。返回的恢复 ID 与 `.agent-internal/audit.jsonl` 可用于手工恢复；模型不能访问内部回收和审计目录。审计记录申请、批准/拒绝、完成或失败。
-
-已完成的文件操作不会因后续模型失败自动撤销。请以审计日志和文件状态判断是否完成，不把最终回答当作唯一依据。
+Windows 可运行 `scripts/run-discord.bat` 或 `scripts/run-cli.bat`。两个脚本定位项目目录，失败/退出时保留窗口。模型服务故障会显示安全的 HTTP 状态和角色提示，不输出 Key、Token 或服务响应正文。
 
 ## 扩展与边界
 
@@ -117,12 +139,12 @@ Discord 批准必须明确回复，例如：
 
 每个角色独立注册工具。系统工具不向编码、网站或主管开放；批准接口不作为模型工具。网页、文件和其他 Bot 输出作为参考数据处理。
 
-监听器最多同时处理三个用户任务；一个任务内主管串行分派，最多六次，超预算停止。消息包含 job/task ID、角色、步数、有效期，过滤未知 Bot、伪造发送角色、无关任务、过期或重复投递。每次调用仍有三轮、八次本地工具调用和 120 秒模型等待限制，原生搜索每次 API 请求最多八次。
+监听器最多同时处理三个用户任务；一个任务内主管串行分派，最多六次，超预算停止。消息包含 job/task ID、角色、步数、有效期，过滤未知 Bot、伪造发送角色、无关任务、过期或重复投递。Coding 有六轮、十六次本地工具调用，其他角色默认三轮、八次；每次模型响应等待最多 120 秒，原生搜索每次 API 请求最多八次。
 
-协议包最多 512 KiB、任务和结果最多 32000 字符，上下文最多 64000 字符。长任务以 JSON 附件发送；长最终回答以文本附件发送。Bot 授权头不会发给 Discord CDN 或网站。429 限流等待有上限；未知发送失败不自动重试。内部 reasoning 不发到 Discord。
+协议包最多 512 KiB、任务和结果最多 32000 字符，上下文最多 64000 字符。所有内部任务/结果均以 JSON 附件发往通信频道，聊天正文不输出协议 JSON；长最终回答以文本附件发送到操作频道。两个频道分别维护读取游标，启动跳过两边旧消息。Bot 授权头不会发给 Discord CDN 或网站。429 限流等待有上限；未知发送失败不自动重试。内部 reasoning 不发到 Discord。
 
-任务状态只在内存中；启动跳过旧频道消息，重启不恢复中断任务。首版不支持网页登录、JavaScript 浏览器、任意 shell、代码执行、源文件写入、持久化任务恢复或独立 worker 部署。
+任务状态只在内存中；启动跳过旧频道消息，重启不恢复中断任务。首版不支持网页登录、JavaScript 浏览器、任意 shell、持久化任务恢复或独立 worker 部署。
 
-自动验证使用模拟 Discord/DeepSeek/OpenAI HTTP 服务和临时目录，覆盖跨服务主管调度、两种入口、真实 Gateway/Agent 代码路径、联网工具、批准等待、身份拒绝、一次性授权、文件操作、长附件及限流。真实推理、搜索和 Discord 投递需有效凭据与账户权限；离线通过不等于已完成真实联调。DeepSeek 官方 API 文档和 API 在本次开发时尚受环境网络规则限制，适配行为仅通过模拟 API 验证。
+自动验证使用模拟 Discord/DeepSeek/OpenAI HTTP 服务和临时目录，覆盖跨服务主管调度、两种入口、真实 Gateway/Agent 代码路径、联网工具、自动/手动策略、文件版本冲突、真实 pytest 通过/失败/超时、批准等待、身份拒绝、文件恢复、频道隔离、附件及限流。真实推理、搜索和 Discord 投递需有效凭据与账户权限；离线通过不等于已完成真实联调。DeepSeek 官方 API 文档和 API 在本次开发时尚受环境网络规则限制，适配行为仅通过模拟 API 验证。
 
 参考：[Discord 消息 API](https://docs.discord.com/developers/resources/message)、[限流](https://docs.discord.com/developers/topics/rate-limits)、[Message Content Intent](https://docs.discord.com/developers/events/gateway#message-content-intent)、[OpenAI 模型 ID](https://github.com/openai/openai-python/blob/main/src/openai/types/shared/chat_model.py)。

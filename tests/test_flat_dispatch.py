@@ -92,10 +92,14 @@ def test_manager_budget_stops_further_dispatch():
 def test_default_roles_have_separate_tools_and_cannot_call_approval(tmp_path, monkeypatch):
     config = CollaborationConfig.load(Path(__file__).resolve().parents[1] / 'config/agents.yaml')
     monkeypatch.setenv('SYSTEM_WORKSPACE', str(tmp_path))
+    monkeypatch.setenv('CODING_WORKSPACE', str(tmp_path / 'project'))
     agents = build_agents(config, object())
     assert set(agents) == {'coordinator', 'coding', 'web', 'system'}
     assert config.workflow is None
-    assert not agents['coding'].tools.schemas()
+    assert {'read_project_file', 'write_project_file', 'run_python_tests'} <= {
+        tool['function']['name'] for tool in agents['coding'].tools.schemas()}
+    assert config.agents['coding'].approval_mode == 'automatic'
+    assert config.agents['system'].approval_mode == 'automatic'
     assert not agents['coordinator'].tools.schemas()
     assert agents['web'].builtin_tools == [{'type': 'web_search'}]
     assert not agents['system'].builtin_tools
@@ -104,3 +108,12 @@ def test_default_roles_have_separate_tools_and_cannot_call_approval(tmp_path, mo
         assert not result['ok']
     result = asyncio.run(agents['system'].tools.execute(ToolCall('approve', {'request_id': 'any'})))
     assert not result['ok']
+
+
+def test_empty_workspace_variables_use_dedicated_defaults(tmp_path, monkeypatch):
+    from companion.collaboration.factory import coding_root, system_root
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('CODING_WORKSPACE', '')
+    monkeypatch.setenv('SYSTEM_WORKSPACE', '')
+    assert coding_root(flat_config()) == tmp_path / '.coding-workspace'
+    assert system_root(flat_config()) == tmp_path / '.spirit-workspace'
