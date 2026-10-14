@@ -12,8 +12,15 @@ models:
     base_url: https://api.openai.com/v1
     api_key_env: CODING_API_KEY
   web:
-    # Temporary placeholder: user has not selected the web model yet.
+    provider: deepseek
+    model: deepseek-flash
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+    thinking: enabled
+    reasoning_effort: high
+  search:
+    # Search backend only; not a fourth agent/Bot.
     provider: openai
-    model: gpt-6-astra
+    model: gpt-6.1-sol
     api_key_env: CODING_API_KEY
 # Fourth agent model is intentionally unconfigured until its purpose is selected.

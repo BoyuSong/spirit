@@ -32,6 +32,7 @@ class CollaborationConfig(BaseModel):
     web_domains: list[str] = Field(default_factory=list, max_length=64)
     system_workspace_env: str = "SYSTEM_WORKSPACE"
     coding_workspace_env: str = "CODING_WORKSPACE"
+    search_model_role: str = Field(default='search', min_length=1, max_length=64)
     poll_interval: float = Field(default=2.0, ge=0.5, le=60, allow_inf_nan=False)
     task_timeout: float = Field(default=600.0, gt=0, le=3600, allow_inf_nan=False)
     context_limit: int = Field(default=64000, gt=0, le=64000)

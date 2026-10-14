@@ -17,11 +17,13 @@ flowchart LR
 
 ## 功能角色
 
+最新选择：网站使用已有 DeepSeek Flash，独立搜索工具复用 OpenAI 后端。用户提到的 ego 浏览器产品身份尚未明确，默认仍为 Chromium；Edge/Chrome 支持可配置通道。
+
 | 功能 | 默认模型 | 工具 | Bot 凭据变量 |
 |---|---|---|---|
 | 主管 `coordinator` | DeepSeek `deepseek-flash`，开启思考、力度 `high`，模型键 `primary` | 按需调度、汇总或直接回答 | `DISCORD_COORDINATOR_BOT_TOKEN` |
 | 编码与系统 `coding` | `gpt-6.1-sol` | 项目读写、运行/编译/测试、CPU/内存状态、目录与文件、下载、删除和恢复 | `DISCORD_CODING_BOT_TOKEN` |
-| 网站 `web` | 暂用 OpenAI `gpt-6-astra`，未定案 | OpenAI 联网搜索、读取公开 HTML/文本、提供来源链接 | `DISCORD_WEB_BOT_TOKEN` |
+| 网站 `web` | DeepSeek `deepseek-flash` | 独立搜索、HTML 读取、浏览器渲染与目标字段提取 | `DISCORD_WEB_BOT_TOKEN` |
 | 第四个 Agent | 待定，未启用 | 功能待定，确定后注册 | 暂不要求 |
 
 功能 Bot 地位平等，不再固定执行“研究、编码、审查”流水线。主管可只调用一个功能，也可直接回答；编码 Bot 自行检查方案。系统角色已并入 Coding，主管把代码任务和系统任务都分派给 `coding`。目前只注册三个角色，第四个不进入调度目录，不要求额外 Token。编码仍使用你选的 GPT6.1，具备项目文件操作和通用项目命令工具，不按编程语言注册单独接口。
@@ -40,11 +42,11 @@ primary:
 
 `thinking: enabled` 对应 SDK 的 `extra_body={"thinking":{"type":"enabled"}}`，`reasoning_effort: high` 原样发送。SDK 是客户端，主管请求的服务仍是 DeepSeek；不会发送到 OpenAI。关闭思考可设为 `disabled` 并移除推理力度字段。客户端缓存区分思考模式和力度，SDK 自动重试关闭，避免未知失败时重复推理。
 
-编码与系统操作共用 OpenAI GPT6.1；旧 `system` 模型占位已移除。网站的服务与型号尚未选择，表中的 OpenAI 配置是临时占位。OpenAI 型号列于官方 SDK，用户已报告主管在本地 Discord 运行成功，其他型号的实际账户访问、额度及联网工具支持仍需真实验证。
+编码与系统操作共用 OpenAI GPT6.1；旧 `system` 模型占位已移除。网站按用户最新选择改用 DeepSeek Flash 和 `DEEPSEEK_API_KEY`，保持独立 Discord Bot、工具与会话。用户已报告主管在本地 Discord 运行成功，其他型号的实际账户访问、额度及联网工具支持仍需真实验证。
 
-主管使用独立的 `DEEPSEEK_API_KEY`（发送到 `api.deepseek.com`）；OpenAI 角色使用 `CODING_API_KEY`（发送到 `api.openai.com`）。两家服务的 Key 不混用，Bot Token 均只从环境设置读取。DeepSeek 使用 JSON 输出模式，调度决定的字段、目标角色和预算由程序验证；不把返回 JSON 等同于合法调度授权。无效决定会停止任务。
+主管与网站使用 `DEEPSEEK_API_KEY`（发送到 `api.deepseek.com`）；OpenAI 角色使用 `CODING_API_KEY`（发送到 `api.openai.com`）。两家服务的 Key 不混用，Bot Token 均只从环境设置读取。DeepSeek 使用 JSON 输出模式，调度决定的字段、目标角色和预算由程序验证；不把返回 JSON 等同于合法调度授权。无效决定会停止任务。
 
-主管采用你选择的 Flash 思考模式；如果等待时间成为问题，再调整思考力度或模式。网站优先选择支持原生 `web_search` 的模型。网站暂不切换，待确认型号及工具支持后再改配置。DeepSeek 适配支持 function 工具，不能直接使用 OpenAI 原生 `web_search`；换成 DeepSeek 网站角色时应取消该原生工具并使用独立搜索工具。
+主管采用你选择的 Flash 思考模式；如果等待时间成为问题，再调整思考力度或模式。网站 Flash 只调用函数工具，不携带 OpenAI 原生工具。`search_web` 是独立工具后端：`agents.yaml` 的 `search_model_role` 指向 `models.yaml` 的 `search`，当前为 OpenAI GPT6.1 和已有 `CODING_API_KEY`。它不是第四个 Agent/Bot。只向后端发送搜索词，强制调用原生搜索，验证已完成的 search 记录并返回摘要、来源 URL 和可直接读取标记。搜索后端支持及账号权限需真实验证，仍产生 OpenAI API 用量；可将来替换独立搜索服务而不更换 Flash。Discord 网站入口会检查两家凭据。
 
 ## 调度入口
 
@@ -111,7 +113,13 @@ Coding 同时拥有系统工具，文件部分继续使用 `SYSTEM_WORKSPACE`，
 
 文件工具拒绝绝对路径、越界、符号链接/Windows junction、凭据与控制目录、大小写形式的 `.env`/`.git`、Windows 设备名及 NTFS 替代数据流路径。这是应用层路径约束，不能隔离同机其他进程。
 
-网站 Bot 使用原生 `web_search` 检索和 `read_webpage` 读取公开 HTML/文本。`get_web_capabilities` 可查看允许域名和格式；网页返回实际 URL、标题、正文片段、来源链接和 `next_offset`，可分页继续读取。链接会标明能否由当前域名表直接读取；不支持的域名、登录或 JavaScript 页面应报告限制。
+网站 Bot 分三层处理任务：Flash 调用 `search_web` 搜索来源，`read_webpage` 快速读取公开 HTML/文本，`browse_webpage` 用 Playwright/Chromium 渲染 JavaScript 页面并返回正文、标题、链接、元素选择器提示和分页。`extract_webpage` 按 `selectors: {字段名: CSS选择器}` 提取目标信息，可通过 `attributes: {字段名: 属性名}` 读取链接、时间及 meta 属性；最多 8 个字段、每字段 3 个匹配/1000 字符。未匹配或截断明确标记，结果附实际 URL，不把搜索摘要当完整证据。`get_web_capabilities` 报告域名、格式、浏览器依赖及限制。
+
+安装：`uv pip install --python .venv/Scripts/python.exe -r pyproject.toml --extra browser`（Windows），然后 `.venv/Scripts/python.exe -m playwright install chromium`。默认 `WEB_BROWSER_CHANNEL=chromium`，已有系统 Chromium/Chrome 在 `PATH` 时可直接使用。已安装 Microsoft Edge 可设 `msedge`，Google Chrome 可设 `chrome`；也可用优先级更高的 `WEB_BROWSER_EXECUTABLE_PATH` 指定程序路径；无系统浏览器时使用 Playwright 下载的 Chromium。安装后重启程序。普通 HTML 和原生搜索不依赖浏览器。
+
+浏览器逐个拦截页面、子资源、重定向请求，限定配置中的公共 HTTPS 域名及 GET/HEAD；阻止 WebSocket 和 service worker，不带模型/Bot 授权头。每次调用使用新的浏览器/上下文，结束或失败会关闭；没有共享登录、Cookie 或本地浏览器 profile。动态站点的脚本/API/CDN 域名也要加入 `web_domains`，云端网络策略同时允许；未获准的资源可能导致页面不完整。首版不提供登录、点击或表单提交。正文最多 1 MiB，分页单次最多 24000 字符；动态页面每次重新读取，偏移不保证对应同一快照。网页工具 45 秒超时，浏览器导航最多 20 秒，可额外等待至多 5 秒。
+
+模型负责搜索策略、选择目标和解释提取结果；实际网页请求与渲染由工具执行，模型选择不改变工具能力。搜索需独立搜索后端模型与账号支持 OpenAI 原生工具，Flash 本身不需要该原生能力；浏览器读取成功不证明搜索已经可用。搜索未执行或后端失败会返回明确错误，禁止返回未验证答案。
 
 手动模式时，后端显示路径/URL、哈希/diff 或测试命令。Discord 只接受发起任务的人类用户回复 `@对应Bot approve 请求ID` 或 `deny 请求ID`，其他用户、Bot、失效或重复请求不能批准；请求以易读说明显示，不输出原始 JSON。终端输入 `y` 确认，非交互终端拒绝。请求默认 300 秒有效，停止任务会取消等待。自动模式没有待批准请求。
 
@@ -127,7 +135,8 @@ Coding 同时拥有系统工具，文件部分继续使用 `SYSTEM_WORKSPACE`，
 @CodingBot 查看 CPU 和内存状态，并读取系统工作区中的一个 UTF-8 文件
 @CodingBot 删除系统工作区中的测试文件，并返回恢复 ID
 @CodingBot 恢复刚才删除的文件
-@网站Bot 搜索 Python 官方文档并读取来源，给出标题和链接
+@网站Bot 搜索 Python 官方文档并读取来源，提取示例和来源链接
+@网站Bot 访问配置域名内的动态网页，提取指定字段，找不到时如实说明
 @主管 查找 Python 文档，然后让 Coding 写一个示例并测试
 ```
 
@@ -141,11 +150,11 @@ Windows 可运行 `scripts/run-discord.bat` 或 `scripts/run-cli.bat`。两个�
 
 每个角色独立注册工具。Coding 同时持有编码和系统工具，网站与主管不持有这些执行工具；批准接口不作为模型工具。网页、文件和其他 Bot 输出作为参考数据处理。
 
-监听器最多同时处理三个用户任务；一个任务内主管串行分派，最多六次，超预算停止。消息包含 job/task ID、角色、步数、有效期，过滤未知 Bot、伪造发送角色、无关任务、过期或重复投递。Coding 有六轮、十六次本地工具调用，其他角色默认三轮、八次；每次模型响应等待最多 120 秒，原生搜索每次 API 请求最多八次。
+监听器最多同时处理三个用户任务；一个任务内主管串行分派，最多六次，超预算停止。消息包含 job/task ID、角色、步数、有效期，过滤未知 Bot、伪造发送角色、无关任务、过期或重复投递。Coding 和网站各有六轮、十六次本地工具调用，其他角色默认三轮、八次；每次模型响应等待最多 120 秒，原生搜索每次 API 请求最多八次。
 
 协议包最多 512 KiB、任务和结果最多 32000 字符，上下文最多 64000 字符。所有内部任务/结果均以 JSON 附件发往通信频道，聊天正文不输出协议 JSON；长最终回答以文本附件发送到操作频道。两个频道分别维护读取游标，启动跳过两边旧消息。Bot 授权头不会发给 Discord CDN 或网站。429 限流等待有上限；未知发送失败不自动重试。内部 reasoning 不发到 Discord。
 
-任务状态只在内存中；启动跳过旧频道消息，重启不恢复中断任务。首版不支持网页登录、JavaScript 浏览器、交互终端、持久化任务恢复或独立 worker 部署。
+任务状态只在内存中；启动跳过旧频道消息，重启不恢复中断任务。首版不支持网页登录/表单提交、交互终端、持久化任务恢复或独立 worker 部署。
 
 自动验证使用模拟 Discord/DeepSeek/OpenAI HTTP 服务和临时目录，覆盖跨服务主管调度、两种入口、真实 Gateway/Agent 代码路径、联网工具、自动/手动策略、文件版本冲突、真实 pytest 通过/失败/超时、批准等待、身份拒绝、文件恢复、频道隔离、附件及限流。真实推理、搜索和 Discord 投递需有效凭据与账户权限；离线通过不等于已完成真实联调。DeepSeek 官方 API 文档和 API 在本次开发时尚受环境网络规则限制，适配行为仅通过模拟 API 验证。
 

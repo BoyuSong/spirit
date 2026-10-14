@@ -80,6 +80,9 @@ class OpenAIProvider(ModelProvider):
             ]
             if any(tool["type"] == "web_search" for tool in request.tools):
                 payload["max_tool_calls"] = 8
+                payload['include'].append('web_search_call.action.sources')
+        if request.tool_choice is not None:
+            payload['tool_choice'] = request.tool_choice
         if request.response_format:
             payload["text"] = {"format": request.response_format}
         # Use the model's sampling defaults; reasoning models may reject temperature.

@@ -26,6 +26,7 @@ class ModelRequest:
     temperature: float = 0.3
     tools: list[dict[str, Any]] = field(default_factory=list)
     response_format: dict[str, Any] | None = None
+    tool_choice: dict[str, Any] | str | None = None
 
 
 @dataclass

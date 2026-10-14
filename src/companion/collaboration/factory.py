@@ -9,6 +9,8 @@ from companion.tools.coding import CodingFiles, CommandArguments, EditArguments,
 from companion.tools.registry import Tool, ToolArguments, ToolRegistry
 from companion.tools.system import get_system_status
 from companion.tools.web import PageArguments, WebReader
+from companion.tools.browser import BrowseArguments, ExtractArguments, WebBrowser
+from companion.tools.search import SearchArguments, WebSearch
 
 
 def system_root(config: CollaborationConfig) -> Path:
@@ -26,10 +28,20 @@ def build_agents(config, gateway, approvals=None):
     files = SystemFiles(root, approvals, config.web_domains)
     coding = CodingFiles(coding_root(config), approvals)
     web = WebReader(config.web_domains)
+    browser = WebBrowser(config.web_domains)
+    search = WebSearch(gateway, config.search_model_role, config.web_domains)
+    async def web_capabilities(args):
+        result = await web.capabilities(args)
+        result['browser'] = browser.capabilities()
+        result['search'] = search.capabilities()
+        return result
     available = {
         "get_system_status": Tool("get_system_status", "Read current CPU and memory status", ToolArguments, get_system_status),
-        "get_web_capabilities": Tool("get_web_capabilities", "Get website reading domains, formats and pagination limits", ToolArguments, web.capabilities),
+        "get_web_capabilities": Tool("get_web_capabilities", "Get reading domains, formats, pagination and browser setup/capabilities", ToolArguments, web_capabilities),
         "read_webpage": Tool("read_webpage", "Read public HTTPS HTML/text, title, links and a text chunk; use next_offset to continue", PageArguments, web.read, timeout=30),
+        "search_web": Tool("search_web", "Search through the independent backend; return verified search completion, summary and public source URLs", SearchArguments, search.search, timeout=125),
+        "browse_webpage": Tool("browse_webpage", "Read a JavaScript-rendered public page with Chromium; return text, links and selector hints", BrowseArguments, browser.browse, timeout=45),
+        "extract_webpage": Tool("extract_webpage", "Extract named target fields by selectors; optional attributes maps field names to href/datetime/etc; report unmatched fields", ExtractArguments, browser.extract, timeout=45),
         "list_directory": Tool("list_directory", "List a directory inside the system workspace", PathArguments, files.list_directory),
         "get_system_workspace": Tool("get_system_workspace", "Get the system workspace path and configured execution policy", ToolArguments, files.workspace_info),
         "make_directory": Tool("make_directory", "Create a directory inside the system workspace", PathArguments, files.make_directory, timeout=360),

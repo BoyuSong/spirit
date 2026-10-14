@@ -2,7 +2,7 @@
 
 当前仓库实现的是 **云端多模型 Agent Core**：主管、Coding（编码与系统操作）、网站三个启用的功能 Bot，第四个 Agent 用途待定。每个启用角色使用独立 Discord Bot，支持用户直接调度和主管按需分派；Coding 可修改代码并调用本机开发工具验证，也能查询系统状态、下载、删除和恢复文件。按用户当前设置，Coding 操作自动执行并记录日志。内部任务数据使用独立 Discord 频道，默认全部使用云端模型。
 
-安装、使用和测试见 [Agent 开发说明](README1.md)，角色配置和新增 Bot 见 [Discord 多模型设计](docs/cloud-multi-agent.md)。
+网站 Bot 使用 DeepSeek Flash 调用独立搜索、普通网页读取、Chromium 渲染及目标字段提取工具。搜索后端复用已有 OpenAI 模型与 Key。安装、使用和测试见 [Agent 开发说明](README1.md)，角色配置和新增 Bot 见 [Discord 多模型设计](docs/cloud-multi-agent.md)。
 
 以下保留早期 Windows 桌宠设计作为参考；其中本地模型及启动步骤不适用于当前云端 Agent，当前代码尚未包含该 UI 阶段。
 

@@ -1,6 +1,6 @@
 # AI Companion — Cloud Functional Agents
 
-默认使用云端模型，启用主管、Coding、网站三个功能 Bot。系统功能已并入 Coding，第四个 Agent 用途待定，不配置模型或 Token。主管使用你选的 DeepSeek `deepseek-flash`，开启思考模式、推理力度 `high`；Coding 使用 OpenAI GPT6.1（`gpt-6.1-sol`），同时负责代码与系统操作；网站暂保留 OpenAI 占位配置，型号未定。你可以直接调度，也可以让主管按需分派；每个启用角色使用独立 Discord Bot，不需要安装或启动本地模型。
+默认使用云端模型，启用主管、Coding、网站三个功能 Bot。系统功能已并入 Coding，第四个 Agent 用途待定，不配置模型或 Token。主管与网站使用 DeepSeek `deepseek-flash`、`DEEPSEEK_API_KEY`，开启思考模式、推理力度 `high`；Coding 使用 OpenAI GPT6.1（`gpt-6.1-sol`）、`CODING_API_KEY`。各角色拥有独立工具与会话，用户可直接调度，也可让主管分派；不需要安装本地模型。
 
 ## 安装与命令行
 
@@ -32,13 +32,34 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 .\.venv\Scripts\python.exe -m companion --agent coding "查看 CPU 和内存状态"
 ```
 
-Coding 可读取项目、修改各类代码文件、按哈希校验做局部编辑，并调用本机运行时或编译器运行、构建和测试；同时具备系统状态、目录和文件读取，以及下载、回收删除和恢复工具。网站具备联网搜索、网页标题/链接和分页读取。Coding 按你的当前选择自动执行，无需逐次批准，操作仍有日志。
+Coding 可读取项目、修改各类代码文件、按哈希校验做局部编辑，并调用本机运行时或编译器运行、构建和测试；同时具备系统状态、目录和文件读取，以及下载、回收删除和恢复工具。网站具备联网搜索、普通网页读取、浏览器渲染和目标字段提取。Coding 按你的当前选择自动执行，无需逐次批准，操作仍有日志。
 
 在 `.env` 中配置 `CODING_WORKSPACE` 指向目标项目。默认 `.coding-workspace` 是独立演示目录；`SYSTEM_WORKSPACE` 默认 `.spirit-workspace`。例如 `CODING_WORKSPACE=D:/works/目标项目`。pytest 使用运行 Bot 的 Python 环境，目标项目依赖需要安装到该环境。文件工具约束工作区路径；执行测试仍以当前用户权限运行项目代码，不是操作系统沙箱。
 
 其他语言无需更换模型或新增语言 API。`run_project_command` 接受程序和参数数组，例如 `['node', 'example.js']`、`['npm', 'test']`、`['go', 'test', './...']`、`['javac', 'Main.java']`，工作目录必须位于 `CODING_WORKSPACE`。编译型语言可先编译、再运行产物；TypeScript 按项目已有脚本运行或测试。先在本机安装对应运行时、编译器和项目依赖，确保程序在 `PATH` 中，然后重启 Bot。Python 命令使用 Bot 自己的虚拟环境。
 
 项目命令默认 30 秒、最多 60 秒，返回实际退出码及最多 64 KiB 输出；长驻服务会超时。命令参数不进行 shell 字符串解析，不能用一条 `&&` 字符串拼接多步操作。Windows 的 npm/npx 使用 Node 执行其 JS 入口；其他 `.bat`/`.cmd` 包装器需改用原生程序或脚本解释器。命令成功不代表测试实际执行，Bot 必须结合输出说明验证结果。
+
+## 网站搜索与信息提取
+
+网站模型按用户最新选择使用已有 DeepSeek Flash。用户提到的 ego 浏览器尚未明确其具体产品，当前默认仍使用 Chromium；可选 Microsoft Edge/Chrome 通道，不自动切换。
+
+Flash 调用 `search_web` 找来源，`read_webpage` 读取普通网页；需要 JavaScript 时用 Playwright 的 `browse_webpage`，再按目标用 `extract_webpage` 提取正文、标题、价格、作者、时间或链接等字段。字段未匹配会明确返回未找到，结果附实际 URL。网页内容仅作为资料，不作为执行指令。
+
+独立搜索工具目前通过 OpenAI 原生 `web_search` 执行，用 `config/models.yaml` 的 `search` 模型和已有 `CODING_API_KEY`，无需新增搜索账号，但仍产生 OpenAI API 用量。`search` 是工具后端，不是第四个 Agent/Bot，也没有编码或系统工具。只发送搜索词，不转发其他角色历史或项目文件；强制调用搜索，确认返回实际完成的 search 记录后才返回摘要与来源。搜索失败时如实报告，不把模型凭空回答当搜索结果。网站的独立搜索和网页读取完整功能需要两家 Key。
+
+本机安装浏览器扩展（原生搜索和普通网页读取不需要 Chromium）：
+
+```powershell
+.\.venv\Scripts\python.exe -m uv pip install --python .\.venv\Scripts\python.exe -r pyproject.toml --extra dev --extra browser
+.\.venv\Scripts\python.exe -m playwright install chromium
+```
+
+默认 `WEB_BROWSER_CHANNEL=chromium`：优先使用显式 `WEB_BROWSER_EXECUTABLE_PATH`，然后查找 `PATH` 中的 Chromium/Chrome，否则使用 Playwright 下载的 Chromium。路径变量可保持空白。如使用已安装的微软 Edge，设 `WEB_BROWSER_CHANNEL=msedge`；Google Chrome 用 `chrome`。显式程序路径优先于通道。通道选择已通过参数验证，Windows Edge 实际运行仍需本机验证。修改配置后重启，例如：`@网站Bot 搜索 Python 配置读取的官方文档，访问来源并提取代码示例和链接`。
+
+直接访问的页面及其脚本、API、重定向目标都必须在 `config/agents.yaml` 的 `web_domains` 内，新增目标网站时补上准确域名并重启；云端还需允许相应网络域名。原生搜索由 OpenAI 服务端访问网络，可搜索域名表外的来源。模型是否支持原生搜索及账号访问需真实 API 验证；浏览器工具本身不会替代搜索服务。
+
+浏览器首版只读，支持 GET/HEAD、JavaScript 渲染、链接和分页 URL 读取；每次调用是独立会话，不保留 Cookie，不提供登录、表单提交或点击操作。提取工具最多 8 个字段，每字段最多 3 个匹配、1000 字符，支持指定 `href`/`datetime`/`content` 等属性；缺失或截断会标记。正文沿用读取分页限制；动态页面重新读取时内容可能变化，分页偏移不保证跨调用快照一致。
 
 ## Discord 调度
 
@@ -71,12 +92,12 @@ Coding 的系统文件工具使用 `SYSTEM_WORKSPACE`，云环境建议 `/worksp
 
 ```bash
 python3 -m venv /workspace/.venvs/spirit
-UV_CACHE_DIR=/workspace/.cache/uv uv pip install --python /workspace/.venvs/spirit/bin/python -r pyproject.toml --extra dev
+UV_CACHE_DIR=/workspace/.cache/uv uv pip install --python /workspace/.venvs/spirit/bin/python -r pyproject.toml --extra dev --extra browser
 export PYTHONPATH="$PWD/src"
 export PYTHONDONTWRITEBYTECODE=1
 /workspace/.venvs/spirit/bin/python -m pytest -q -p no:cacheprovider
 ```
 
-测试使用模拟 DeepSeek/OpenAI/Discord HTTP 和临时文件，验证跨服务调度、工具隔离、批准等待、文件操作及消息边界。真实模型访问、联网搜索和 Discord 联调仍需有效凭据、账户权限及频道权限；保存云环境草稿不会注入凭据或自动发布配置。
+测试使用模拟 DeepSeek/OpenAI/Discord HTTP 和临时文件，验证跨服务调度、工具隔离、批准等待、文件操作及消息边界。浏览器测试用真实 Chromium 渲染本地拦截返回的 HTML/JavaScript，不访问真实网站；无 Playwright 或系统 Chromium 时跳过这部分测试。真实模型访问、联网搜索和 Discord 联调仍需有效凭据、账户权限及频道权限；保存云环境草稿不会注入凭据或自动发布配置。
 
-当前 job 保存在内存中，重启不恢复中断任务。操作日志在系统工作区的 `.agent-internal/audit.jsonl`。文件操作完成后不会因后续模型失败自动回滚，需查看日志和文件状态。尚未包含持久化队列、独立 worker、交互终端、浏览器自动化或桌宠 UI。
+当前 job 保存在内存中，重启不恢复中断任务。操作日志在系统工作区的 `.agent-internal/audit.jsonl`。文件操作完成后不会因后续模型失败自动回滚，需查看日志和文件状态。尚未包含持久化队列、独立 worker、交互终端、浏览器登录/表单操作或桌宠 UI。
