@@ -75,9 +75,13 @@ class OpenAIProvider(ModelProvider):
         }
         if request.tools:
             payload["tools"] = [
-                {"type": "function", **tool["function"], "strict": False}
+                {"type": "function", **tool["function"], "strict": False} if tool["type"] == "function" else dict(tool)
                 for tool in request.tools
             ]
+            if any(tool["type"] == "web_search" for tool in request.tools):
+                payload["max_tool_calls"] = 8
+        if request.response_format:
+            payload["text"] = {"format": request.response_format}
         # Use the model's sampling defaults; reasoning models may reject temperature.
         async with httpx.AsyncClient(timeout=120, transport=self.transport) as client:
             response = await client.post(
@@ -97,11 +101,17 @@ class OpenAIProvider(ModelProvider):
                 raise ValueError("OpenAI output must be a list")
             content = []
             calls = []
+            sources = []
             for item in output:
                 if item["type"] == "message":
                     for part in item["content"]:
                         if part["type"] == "output_text":
                             content.append(part["text"])
+                            for annotation in part.get("annotations", []):
+                                if annotation.get("type") == "url_citation" and annotation.get("url") not in sources:
+                                    url = annotation.get("url", "")
+                                    if isinstance(url, str) and url.startswith(("https://", "http://")):
+                                        sources.append(url)
                         elif part["type"] == "refusal":
                             content.append(part["refusal"])
                 elif item["type"] == "function_call":
@@ -115,6 +125,8 @@ class OpenAIProvider(ModelProvider):
                     calls.append(ToolCall(name=item["name"], arguments=arguments, id=item["call_id"]))
             if len({call.id for call in calls}) != len(calls):
                 raise ValueError("Duplicate OpenAI function call IDs")
+            if sources and not request.response_format:
+                content.append("来源：\n" + "\n".join(sources))
             return ModelResponse(
                 content="\n".join(content), model=data.get("model", self.model),
                 tool_calls=calls, provider_items=output, provider_model=self.model,

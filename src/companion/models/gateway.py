@@ -15,6 +15,7 @@ class ModelGateway:
         role: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> ModelResponse:
         config = self.registry.get(role)
         if config.provider == "ollama":
@@ -29,4 +30,6 @@ class ModelGateway:
                 )
         else:
             raise ValueError(f"Unsupported provider: {config.provider}")
-        return await self.providers[key].generate(ModelRequest(messages=messages, tools=tools or []))
+        return await self.providers[key].generate(ModelRequest(
+            messages=messages, tools=tools or [], response_format=response_format,
+        ))

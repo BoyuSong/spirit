@@ -104,33 +104,52 @@ def test_four_distinct_bots_complete_a_workflow_through_mock_discord_http(monkey
     asyncio.run(check())
 
 
-def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_paths(monkeypatch):
+def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_paths(monkeypatch, tmp_path):
     from pathlib import Path
+    from companion.collaboration.config import CollaborationConfig
+    from companion.collaboration.factory import build_agents
 
     root = Path(__file__).resolve().parents[1]
-    config = configuration()
+    config = CollaborationConfig.load(root / "config" / "agents.yaml")
     service = DiscordService(config, monkeypatch)
     bus = DiscordBus(config, transport=httpx.MockTransport(service.handle))
     registry = ModelRegistry(root / "config" / "models.yaml")
     gateway = ModelGateway(registry)
     monkeypatch.setenv("CODING_API_KEY", "test-model-key")
     model_requests = []
-    coding_requests = []
+    system_requests = []
+    decisions = iter([
+        {"action": "delegate", "agent": role, "task": "Check", "answer": None}
+        for role in ("web", "system", "coding")
+    ] + [{"action": "finish", "agent": None, "task": None, "answer": "Completed"}])
+    monkeypatch.setenv("SYSTEM_WORKSPACE", str(tmp_path))
 
     def models_endpoint(request):
         assert request.headers["Authorization"] == "Bearer test-model-key"
         body = json.loads(request.content)
         model_requests.append(body["model"])
         model = body["model"]
-        if model == registry.get("coding").model:
-            coding_requests.append(body)
-            if len(coding_requests) == 1:
+        text = f"{model} result"
+        annotations = []
+        if model == registry.get("primary").model:
+            assert body["text"]["format"]["strict"] is True
+            assert "tools" not in body
+            text = json.dumps(next(decisions))
+        elif model == registry.get("coding").model:
+            assert "tools" not in body
+        elif model == registry.get("web").model:
+            assert {tool["type"] for tool in body["tools"]} == {"web_search", "function"}
+            annotations = [{"type": "url_citation", "url": "https://docs.python.org/3/"}]
+        elif model == registry.get("system").model:
+            system_requests.append(body)
+            assert all(tool["type"] == "function" for tool in body["tools"])
+            if len(system_requests) == 1:
                 output = [{"type": "function_call", "call_id": "call_status", "name": "get_system_status", "arguments": "{}"}]
                 return httpx.Response(200, json={"status": "completed", "model": model, "output": output})
             result = json.loads(body["input"][-1]["output"])
             assert result["ok"] is True
             assert result["result"]["memory"]["total_bytes"] > 0
-        output = [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": f"{model} result"}]}]
+        output = [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text, "annotations": annotations}]}]
         return httpx.Response(200, json={"status": "completed", "model": model, "output": output})
 
     for model in registry.config.models.values():
@@ -143,11 +162,12 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
     async def check():
         try:
             await bus.initialize()
-            result = await WorkflowRunner(config, bus, Agent(gateway, default_tools())).run("Review system monitoring code")
-            assert result.content == f"{registry.get('primary').model} result"
+            result = await WorkflowRunner(config, bus, build_agents(config, gateway)).run("Review system monitoring code")
+            assert result.content == "Completed"
+            assert "https://docs.python.org/3/" in result.results["1:web"]
             assert len(set(model_requests)) == 4
-            assert len(model_requests) == 6
-            assert len(service.messages) == 10
+            assert len(model_requests) == 8
+            assert len(service.messages) == 14
         finally:
             await bus.close()
 

@@ -8,11 +8,11 @@ models:
     model: gpt-6.1-sol
     base_url: https://api.openai.com/v1
     api_key_env: CODING_API_KEY
-  review:
+  system:
     provider: openai
     model: gpt-6-sol
     api_key_env: CODING_API_KEY
-  research:
+  web:
     provider: openai
     model: gpt-6-astra
     api_key_env: CODING_API_KEY

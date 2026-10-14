@@ -29,6 +29,7 @@ class Agent:
         max_tool_rounds: int = 3,
         max_tool_calls: int = 8,
         model_timeout: float = 120.0,
+        builtin_tools: list[dict[str, Any]] | None = None,
     ):
         if type(max_tool_rounds) is not int or max_tool_rounds < 0:
             raise ValueError("max_tool_rounds must be a nonnegative integer")
@@ -41,15 +42,19 @@ class Agent:
         self.max_tool_rounds = max_tool_rounds
         self.max_tool_calls = max_tool_calls
         self.model_timeout = model_timeout
+        self.builtin_tools = builtin_tools or []
 
-    async def run(self, role: str, messages: list[dict[str, Any]]) -> AgentResult:
+    async def run(self, role: str, messages: list[dict[str, Any]], *, response_format=None) -> AgentResult:
         # Commit history only after a complete answer; failed turns leave the caller unchanged.
         history = deepcopy(messages)
         calls = 0
         for round_index in range(self.max_tool_rounds + 1):
             try:
+                options = {"tools": self.tools.schemas() + self.builtin_tools}
+                if response_format:
+                    options["response_format"] = response_format
                 response = await asyncio.wait_for(
-                    self.gateway.generate(role, history, tools=self.tools.schemas()),
+                    self.gateway.generate(role, history, **options),
                     timeout=self.model_timeout,
                 )
             except TimeoutError as exc:
