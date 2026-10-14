@@ -3,6 +3,7 @@ import json
 import os
 
 import httpx
+from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 
 from companion.models.base import ModelProvider, ModelRequest, ModelResponse, ToolCall
 
@@ -48,7 +49,8 @@ def chat_messages(messages, *, model):
 
 
 class DeepSeekProvider(ModelProvider):
-    def __init__(self, model, base_url="https://api.deepseek.com/v1", api_key_env="DEEPSEEK_API_KEY", *, transport=None):
+    def __init__(self, model, base_url="https://api.deepseek.com/v1", api_key_env="DEEPSEEK_API_KEY", *, transport=None,
+                 thinking=None, reasoning_effort=None):
         url = httpx.URL(base_url)
         if url.scheme != "https" or not url.host or url.userinfo or url.query or url.fragment:
             raise ValueError("DeepSeek base_url must be HTTPS without credentials, query or fragment")
@@ -56,12 +58,20 @@ class DeepSeekProvider(ModelProvider):
         self.base_url = base_url.rstrip("/")
         self.api_key_env = api_key_env
         self.transport = transport
+        if thinking not in (None, "enabled", "disabled") or reasoning_effort not in (None, "low", "medium", "high"):
+            raise ValueError("Invalid DeepSeek thinking configuration")
+        self.thinking = thinking
+        self.reasoning_effort = reasoning_effort
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         key = os.environ.get(self.api_key_env)
         if not key or not key.strip():
             raise ValueError(f"Set {self.api_key_env} in environment settings to use DeepSeek")
         payload = {"model": self.model, "messages": chat_messages(request.messages, model=self.model), "stream": False}
+        if self.thinking is not None:
+            payload["extra_body"] = {"thinking": {"type": self.thinking}}
+        if self.reasoning_effort is not None:
+            payload["reasoning_effort"] = self.reasoning_effort
         if request.tools:
             if any(tool.get("type") != "function" for tool in request.tools):
                 raise ValueError("DeepSeek adapter supports function tools; native web_search requires a compatible provider")
@@ -77,13 +87,11 @@ class DeepSeekProvider(ModelProvider):
             if kind == "json_schema":
                 instruction += " Follow this JSON schema: " + json.dumps(request.response_format["schema"], ensure_ascii=False)
             payload["messages"].insert(0, {"role": "system", "content": instruction})
-        async with httpx.AsyncClient(timeout=120, transport=self.transport) as client:
-            response = await client.post(f"{self.base_url}/chat/completions", json=payload,
-                                        headers={"Authorization": f"Bearer {key}"})
-        if response.is_error or response.is_redirect:
-            raise RuntimeError(f"DeepSeek request failed (HTTP {response.status_code}); check API access and model availability")
         try:
-            data = response.json()
+            async with AsyncOpenAI(api_key=key, base_url=self.base_url, timeout=120, max_retries=0,
+                    http_client=httpx.AsyncClient(timeout=120, transport=self.transport, follow_redirects=False)) as client:
+                response = await client.chat.completions.create(**payload)
+            data = response.model_dump(mode="json")
             if data.get("error") or len(data["choices"]) != 1:
                 raise ValueError("Invalid DeepSeek choices")
             choice = data["choices"][0]
@@ -109,5 +117,9 @@ class DeepSeekProvider(ModelProvider):
             native = [{"reasoning_content": reasoning}] if isinstance(reasoning, str) else []
             return ModelResponse(content, data.get("model", self.model), calls,
                                  provider_items=native, provider_model=f"deepseek:{self.model}")
+        except APIStatusError as exc:
+            raise RuntimeError(f"DeepSeek request failed (HTTP {exc.status_code}); check API access and model availability") from None
+        except APIConnectionError:
+            raise RuntimeError("DeepSeek connection failed; check network access and service availability") from None
         except (AttributeError, KeyError, TypeError, ValueError) as exc:
             raise ValueError("DeepSeek returned an invalid or incomplete response") from exc

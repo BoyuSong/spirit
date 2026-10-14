@@ -1,6 +1,6 @@
 # AI Companion — Cloud Functional Agents
 
-默认使用云端模型：主管、Coding、网站、系统四个功能 Bot。主管先用 DeepSeek `deepseek-chat`，编码使用 OpenAI GPT6.1（`gpt-6.1-sol`）；系统和网站暂保留 OpenAI 占位配置，型号未定。你可以直接调度，也可以让主管按需分派；每个角色使用独立 Discord Bot，不需要安装或启动本地模型。
+默认使用云端模型：主管、Coding、网站、系统四个功能 Bot。主管使用你选的 DeepSeek `deepseek-flash`，开启思考模式、推理力度 `high`；编码使用 OpenAI GPT6.1（`gpt-6.1-sol`）。系统和网站暂保留 OpenAI 占位配置，型号未定。你可以直接调度，也可以让主管按需分派；每个角色使用独立 Discord Bot，不需要安装或启动本地模型。
 
 ## 安装与命令行
 

@@ -30,9 +30,11 @@ class ModelGateway:
                     model=config.model, base_url=config.base_url, api_key_env=config.api_key_env,
                 )
         elif config.provider == "deepseek":
-            key = (config.provider, config.model, config.base_url, config.api_key_env)
+            key = (config.provider, config.model, config.base_url, config.api_key_env,
+                   config.thinking or "", config.reasoning_effort or "")
             if key not in self.providers:
-                self.providers[key] = DeepSeekProvider(config.model, config.base_url, config.api_key_env)
+                self.providers[key] = DeepSeekProvider(config.model, config.base_url, config.api_key_env,
+                    thinking=config.thinking, reasoning_effort=config.reasoning_effort)
         else:
             raise ValueError(f"Unsupported provider: {config.provider}")
         return await self.providers[key].generate(ModelRequest(

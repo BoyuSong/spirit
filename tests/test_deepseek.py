@@ -137,7 +137,7 @@ def test_deepseek_defaults_and_model_gateway_cache(monkeypatch, tmp_path):
     path.write_text('models:\n  primary:\n    provider: deepseek\n    model: deepseek-chat\n  other:\n    provider: deepseek\n    model: deepseek-chat\n')
     requests = []
     class Provider:
-        def __init__(self, model, base_url, api_key_env):
+        def __init__(self, model, base_url, api_key_env, **options):
             assert api_key_env == 'DEEPSEEK_API_KEY'
         async def generate(self, request):
             requests.append(request)
@@ -170,9 +170,46 @@ def test_deepseek_invalid_manager_decision_is_locally_rejected(monkeypatch):
     registry = ModelRegistry(root / 'config/models.yaml')
     model = registry.get('primary')
     gateway = ModelGateway(registry)
-    gateway.providers[(model.provider, model.model, model.base_url, model.api_key_env)] = DeepSeekProvider(
+    gateway.providers[(model.provider, model.model, model.base_url, model.api_key_env, model.thinking or "", model.reasoning_effort or "")] = DeepSeekProvider(
         model.model, transport=httpx.MockTransport(lambda _: httpx.Response(200, json=completion('{"action":"delegate","agent":"unknown","task":"run","answer":null}'))))
     bus = MemoryBus()
     with pytest.raises(WorkflowError, match='unknown'):
         asyncio.run(WorkflowRunner(config, bus, Agent(gateway, ToolRegistry())).run('task'))
     assert all(message.recipient == 'coordinator' for message in bus.published)
+
+
+def test_sdk_uses_selected_flash_thinking_parameters_and_never_retries_failed_inference(monkeypatch):
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'deepseek-test-key')
+    requests = []
+    def endpoint(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        assert request.url == 'https://api.deepseek.com/chat/completions'
+        assert body['model'] == 'deepseek-flash'
+        assert body['thinking'] == {'type': 'enabled'}
+        assert body['reasoning_effort'] == 'high'
+        assert 'extra_body' not in body
+        return httpx.Response(503, json={'error': 'temporary service error'})
+    provider = DeepSeekProvider('deepseek-flash', base_url='https://api.deepseek.com', thinking='enabled', reasoning_effort='high', transport=httpx.MockTransport(endpoint))
+    with pytest.raises(RuntimeError, match='HTTP 503'):
+        asyncio.run(provider.generate(ModelRequest([{'role': 'user', 'content': 'test'}])))
+    assert len(requests) == 1
+
+
+def test_gateway_does_not_share_providers_with_different_thinking_modes(monkeypatch, tmp_path):
+    path = tmp_path / 'models.yaml'
+    path.write_text('models:\n  fast:\n    provider: deepseek\n    model: deepseek-flash\n    thinking: disabled\n  deep:\n    provider: deepseek\n    model: deepseek-flash\n    thinking: enabled\n    reasoning_effort: high\n')
+    options_seen = []
+    class Provider:
+        def __init__(self, *args, **options):
+            options_seen.append(options)
+        async def generate(self, request):
+            return SimpleNamespace(content='ok')
+    monkeypatch.setattr('companion.models.gateway.DeepSeekProvider', Provider)
+    gateway = ModelGateway(ModelRegistry(path))
+    async def check():
+        await gateway.generate('fast', [])
+        await gateway.generate('deep', [])
+    asyncio.run(check())
+    assert len(gateway.providers) == 2
+    assert options_seen == [{'thinking': 'disabled', 'reasoning_effort': None}, {'thinking': 'enabled', 'reasoning_effort': 'high'}]

@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
@@ -9,6 +10,8 @@ class ModelConfig(BaseModel):
     host: str = "http://127.0.0.1:11434"
     base_url: str = "https://api.openai.com/v1"
     api_key_env: str = "CODING_API_KEY"
+    thinking: Literal["enabled", "disabled"] | None = None
+    reasoning_effort: Literal["low", "medium", "high"] | None = None
 
     @model_validator(mode="before")
     @classmethod

@@ -19,18 +19,32 @@ flowchart LR
 
 | 功能 | 默认模型 | 工具 | Bot 凭据变量 |
 |---|---|---|---|
-| 主管 `coordinator` | DeepSeek `deepseek-chat`，模型键 `primary` | 按需调度、汇总或直接回答 | `DISCORD_COORDINATOR_BOT_TOKEN` |
+| 主管 `coordinator` | DeepSeek `deepseek-flash`，开启思考、力度 `high`，模型键 `primary` | 按需调度、汇总或直接回答 | `DISCORD_COORDINATOR_BOT_TOKEN` |
 | 编码 `coding` | `gpt-6.1-sol` | 生成、解释和检查代码、提出测试建议 | `DISCORD_CODING_BOT_TOKEN` |
 | 网站 `web` | 暂用 OpenAI `gpt-6-astra`，未定案 | OpenAI 联网搜索、读取公开 HTML/文本、提供来源链接 | `DISCORD_WEB_BOT_TOKEN` |
 | 系统 `system` | 暂用 OpenAI `gpt-6-sol`，未定案 | CPU/内存状态、目录列表、文件读取、经批准下载和删除 | `DISCORD_SYSTEM_BOT_TOKEN` |
 
 功能 Bot 地位平等，不再固定执行“研究、编码、审查”流水线。主管可只调用一个功能，也可直接回答；编码 Bot 自行检查方案，首版没有单独审查角色。编码仍使用你选的 GPT6.1，目前生成代码，尚不执行代码或写入源文件。
 
-主管使用 DeepSeek 的 OpenAI 兼容 Chat Completions 接口，先采用 `deepseek-chat` 通用对话模型；具体型号可在 `config/models.yaml` 更换。编码保持 OpenAI GPT6.1。系统和网站的服务与型号尚未选择，表中的 OpenAI 配置是临时占位。OpenAI 型号列于官方 SDK，所有型号的实际账户访问、额度及联网工具支持仍需真实验证。
+主管按你提供的示例，使用 OpenAI SDK 的异步 Chat Completions 接口访问 DeepSeek：
+
+```yaml
+primary:
+  provider: deepseek
+  model: deepseek-flash
+  base_url: https://api.deepseek.com
+  api_key_env: DEEPSEEK_API_KEY
+  thinking: enabled
+  reasoning_effort: high
+```
+
+`thinking: enabled` 对应 SDK 的 `extra_body={"thinking":{"type":"enabled"}}`，`reasoning_effort: high` 原样发送。SDK 是客户端，主管请求的服务仍是 DeepSeek；不会发送到 OpenAI。关闭思考可设为 `disabled` 并移除推理力度字段。客户端缓存区分思考模式和力度，SDK 自动重试关闭，避免未知失败时重复推理。
+
+编码保持 OpenAI GPT6.1。系统和网站的服务与型号尚未选择，表中的 OpenAI 配置是临时占位。OpenAI 型号列于官方 SDK，所有型号的实际账户访问、额度及联网工具支持仍需真实验证。
 
 主管使用独立的 `DEEPSEEK_API_KEY`（发送到 `api.deepseek.com`）；OpenAI 角色使用 `CODING_API_KEY`（发送到 `api.openai.com`）。两家服务的 Key 不混用，Bot Token 均只从环境设置读取。DeepSeek 使用 JSON 输出模式，调度决定的字段、目标角色和预算由程序验证；不把返回 JSON 等同于合法调度授权。无效决定会停止任务。
 
-选型建议：主管先用非思考对话模式，复杂规划再试思考模型；系统功能优先试较轻的通用模型（例如 `gpt-6-luna`），授权规则由工具后端控制；网站优先选择支持原生 `web_search` 的模型。系统和网站暂不切换，待确认型号及工具支持后再改配置。DeepSeek 适配支持 function 工具，不能直接使用 OpenAI 原生 `web_search`；换成 DeepSeek 网站角色时应取消该原生工具并使用独立搜索工具。
+主管采用你选择的 Flash 思考模式；如果等待时间成为问题，再调整思考力度或模式。系统功能建议优先试较轻的通用模型（例如 `gpt-6-luna`），授权规则由工具后端控制；网站优先选择支持原生 `web_search` 的模型。系统和网站暂不切换，待确认型号及工具支持后再改配置。DeepSeek 适配支持 function 工具，不能直接使用 OpenAI 原生 `web_search`；换成 DeepSeek 网站角色时应取消该原生工具并使用独立搜索工具。
 
 ## 调度入口
 

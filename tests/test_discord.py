@@ -130,7 +130,10 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
         body = json.loads(request.content)
         if request.url.host == "api.deepseek.com":
             assert request.headers["Authorization"] == "Bearer test-deepseek-key"
-            assert request.url.path == "/v1/chat/completions"
+            assert request.url.path == "/chat/completions"
+            assert body["model"] == "deepseek-flash"
+            assert body["thinking"] == {"type": "enabled"}
+            assert body["reasoning_effort"] == "high"
         else:
             assert request.url.host == "api.openai.com"
             assert request.headers["Authorization"] == "Bearer test-model-key"
@@ -167,8 +170,13 @@ def test_gateway_agent_system_tool_and_all_cloud_models_share_real_http_code_pat
         assert model.provider in ("openai", "deepseek")
         key = (model.provider, model.model, model.base_url, model.api_key_env)
         provider = OpenAIProvider if model.provider == "openai" else DeepSeekProvider
+        options = {}
+        if model.provider == "deepseek":
+            key += (model.thinking or "", model.reasoning_effort or "")
+            options = {"thinking": model.thinking, "reasoning_effort": model.reasoning_effort}
         gateway.providers[key] = provider(
             model.model, model.base_url, model.api_key_env, transport=httpx.MockTransport(models_endpoint),
+            **options,
         )
 
     async def check():

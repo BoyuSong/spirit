@@ -1,9 +1,11 @@
 models:
   primary:
     provider: deepseek
-    model: deepseek-chat
-    base_url: https://api.deepseek.com/v1
+    model: deepseek-flash
+    base_url: https://api.deepseek.com
     api_key_env: DEEPSEEK_API_KEY
+    thinking: enabled
+    reasoning_effort: high
   coding:
     provider: openai
     model: gpt-6.1-sol
